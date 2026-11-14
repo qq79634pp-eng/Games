@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1-25 賓果連線對戰</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#1b1d2a; --panel:#262a3b; --line:#3a3f57; --text:#eef0f7; --muted:#9aa0b8;
+    --accent:#ffd43b; --win:#51cf66; --err:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:radial-gradient(circle at 30% 0%,#2b3050,var(--bg) 60%);
+    color:var(--text);font-family:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
+    display:flex;align-items:flex-start;justify-content:center;padding:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;width:100%;max-width:520px;
+    box-shadow:0 20px 50px rgba(0,0,0,.35);margin-top:4vh}
+  h1{margin:0 0 4px;font-size:26px;letter-spacing:1px}
+  h1 span{color:var(--accent)}
+  .back{display:inline-block;color:var(--muted);text-decoration:none;font-size:13px;margin-bottom:10px}
+  .back:hover{color:var(--accent)}
+  .sub{color:var(--muted);margin:0 0 18px;font-size:14px;line-height:1.6}
+  label{display:block;font-size:13px;color:var(--muted);margin:14px 0 6px}
+  input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid var(--line);background:#1d2030;color:var(--text);font-size:16px;outline:none}
+  input:focus{border-color:var(--accent)}
+  button{font:inherit;cursor:pointer;border:none;border-radius:10px;padding:11px 14px;font-size:15px;font-weight:600}
+  button:disabled{opacity:.4;cursor:default}
+  .primary{background:var(--accent);color:#222;width:100%;margin-top:20px}
+  .ghost{background:#33384f;color:var(--text)}
+  .ghost:not(:disabled):hover{background:#3d435d}
+  .msg{min-height:22px;margin-top:12px;font-size:14px;color:var(--muted);text-align:center}
+  .msg.err{color:var(--err)}
+  .hidden{display:none !important}
+
+  .topbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-size:13px;color:var(--muted)}
+  .players{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .pl{border:2px solid var(--line);border-radius:12px;padding:8px 10px;position:relative;transition:.2s;background:#22263a}
+  .pl.turn{border-color:var(--c);box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 25%,transparent)}
+  .pl.wait{opacity:.55}
+  .pl .name{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:30px}
+  .pl .name::before{content:"";display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--c);margin-right:6px}
+  .pl .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin-top:4px}
+  .pl .meta b{color:var(--text);font-size:15px}
+  .pl .tag{position:absolute;top:7px;right:8px;font-size:11px;border-radius:6px;padding:1px 6px;font-weight:700;background:var(--accent);color:#222}
+  .pl .tag.w{background:#4a4f68;color:var(--text)}
+  .mini-bingo{letter-spacing:1px;font-weight:800;font-size:12px}
+  .mini-bingo i{font-style:normal;color:#4a4f68}
+  .mini-bingo i.on{color:var(--c)}
+  .pl.winner{border-color:var(--win);background:rgba(81,207,102,.12)}
+
+  .toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:#33384f;border:1px solid var(--line);color:var(--text);
+    padding:8px 16px;border-radius:999px;font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.4);transition:opacity .3s;opacity:0;pointer-events:none;z-index:9}
+  .toast.show{opacity:1}
+  .status{text-align:center;font-size:18px;font-weight:700;margin:14px 0 10px;min-height:26px}
+  .bingo-word{display:flex;justify-content:center;gap:10px;margin-bottom:8px}
+  .bingo-word span{width:44px;height:44px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    font-size:24px;font-weight:900;background:#1d2030;color:#4a4f68;transition:.3s}
+  .bingo-word span.on{background:var(--accent);color:#222;transform:scale(1.05)}
+  .bingo-word.full span{background:var(--win);color:#13311a;animation:bounce .6s ease infinite alternate}
+  .bingo-word.full span:nth-child(2){animation-delay:.1s}.bingo-word.full span:nth-child(3){animation-delay:.2s}
+  .bingo-word.full span:nth-child(4){animation-delay:.3s}.bingo-word.full span:nth-child(5){animation-delay:.4s}
+  @keyframes bounce{to{transform:translateY(-6px)}}
+
+  .board{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;background:var(--line);padding:6px;border-radius:14px}
+  .board.locked-out{opacity:.5}
+  .cell{aspect-ratio:1;background:#1d2030;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    font-size:clamp(18px,6vw,28px);font-weight:800;position:relative;user-select:none;transition:background .15s,transform .1s}
+  .cell.can{cursor:pointer}
+  .cell.can:hover{background:#2c3250;transform:scale(1.04)}
+  .cell.mark{color:#1b1d2a}
+  .cell.mark::before{content:"";position:absolute;inset:12%;border-radius:50%;background:var(--mc);z-index:0;animation:pop .25s ease}
+  .cell span{position:relative;z-index:1}
+  .cell.line{box-shadow:inset 0 0 0 3px var(--win)}
+  .cell.last::after{content:"";position:absolute;inset:-2px;border-radius:10px;border:2px dashed #fff;opacity:.8}
+  @keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}
+
+  .section-t{font-size:13px;color:var(--muted);margin:14px 0 6px}
+  .history{display:flex;flex-wrap:wrap;gap:5px;min-height:28px}
+  .history .h{min-width:30px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:14px;color:#1b1d2a;background:var(--mc);padding:0 6px}
+  .history .empty{font-size:13px;color:#5d6380}
+
+  .actions{display:flex;gap:8px;margin-top:16px}
+  .actions button{flex:1;padding:11px 6px;font-size:14px}
+  .newbtn{background:var(--win);color:#13311a}
+  .banner{margin-top:12px;background:#33384f;border-radius:12px;padding:12px;text-align:center;font-size:14px}
+  .banner .btns{display:flex;gap:8px;justify-content:center;margin-top:8px}
+  .banner button{padding:8px 16px;font-size:14px}
+  .ok{background:var(--win);color:#13311a} .no{background:#4a4f68;color:var(--text)}
+
+  .reveal{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
+  .rv{background:#22263a;border:2px solid var(--line);border-radius:12px;padding:8px}
+  .rv.winner{border-color:var(--win)}
+  .rv .t{font-size:13px;font-weight:700;margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rv .t small{color:var(--muted);font-weight:400}
+  .mini{display:grid;grid-template-columns:repeat(5,1fr);gap:2px}
+  .mini div{aspect-ratio:1;background:#1d2030;border-radius:4px;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;position:relative}
+  .mini div.mark{background:var(--mc);color:#1b1d2a}
+  .mini div.line{box-shadow:inset 0 0 0 2px var(--win)}
+  .rv .wait{font-size:12px;color:var(--muted);text-align:center;padding:30px 0}
+</style>
+</head>
+<body>
+
+<!-- 大廳 -->
+<div class="card" id="lobby">
+  <a class="back" href="./">← 遊戲大廳</a>
+  <h1>1-25 <span>賓果</span> 連線對戰</h1>
+  <p class="sub">2～6 人輸入同一個暗號就能進同一個房間。<br>每人一張 1-25 亂數盤，輪流選號，最先連成 5 條線的人獲勝！</p>
+  <label for="nick">你的暱稱</label>
+  <input id="nick" maxlength="12" placeholder="例如：小明">
+  <label for="code">配對暗號</label>
+  <input id="code" maxlength="30" placeholder="和朋友約好的暗號，例如：珍珠奶茶">
+  <button class="primary" id="joinBtn">進入房間</button>
+  <div class="msg" id="lobbyMsg"></div>
+</div>
+
+<!-- 遊戲 -->
+<div class="toast" id="toast"></div>
+<div class="card hidden" id="game">
+  <div class="topbar"><span>暗號：<b id="codeShow"></b></span><span id="roundShow"></span></div>
+  <div class="players" id="players"></div>
+  <div class="status" id="status"></div>
+  <div class="bingo-word" id="bingoWord"><span>B</span><span>I</span><span>N</span><span>G</span><span>O</span></div>
+  <div class="board" id="board"></div>
+  <div class="banner hidden" id="banner"></div>
+  <div class="actions">
+    <button class="newbtn" id="newBtn">開新局</button>
+    <button class="ghost" id="shuffleBtn">🎲 重新取得亂數</button>
+    <button class="ghost" id="leaveBtn">離開</button>
+  </div>
+  <div class="section-t">已選號碼（依順序）</div>
+  <div class="history" id="history"></div>
+  <div id="revealWrap" class="hidden">
+    <div class="section-t">開牌：其他玩家的號碼盤</div>
+    <div class="reveal" id="reveal"></div>
+  </div>
+</div>
+
+<script>
+/* ========== 基本設定 ========== */
+const $ = id => document.getElementById(id);
+const MAX_PLAYERS = 6, WIN_LINES = 5;
+const COLORS = ['#ffd43b','#4dabf7','#ff6b6b','#51cf66','#cc5de8','#ff922b'];
+const LINES = (() => {
+  const L = [];
+  for (let r=0;r<5;r++){ L.push([0,1,2,3,4].map(c=>r*5+c)); L.push([0,1,2,3,4].map(c=>c*5+r)); }
+  L.push([0,6,12,18,24]); L.push([4,8,12,16,20]);
+  return L;
+})();
+
+function rnd(n){ const a=new Uint32Array(1); crypto.getRandomValues(a); return a[0]%n; }
+function makeBoard(){
+  const a = Array.from({length:25},(_,i)=>i+1);
+  for (let i=24;i>0;i--){ const j=rnd(i+1); [a[i],a[j]]=[a[j],a[i]]; }
+  return a;
+}
+function doneLines(board, pickedNums){
+  const s = new Set(pickedNums);
+  return LINES.filter(l => l.every(i => s.has(board[i])));
+}
+
+// 暗號 → 房間 ID（雜湊後當作 PeerJS 的 ID，暗號本身不會外流）
+function cyrb53(str, seed){
+  let h1 = 0xdeadbeef ^ seed, h2 = 0x41c6ce57 ^ seed;
+  for (let i=0;i<str.length;i++){ const c=str.charCodeAt(i);
+    h1=Math.imul(h1^c,2654435761); h2=Math.imul(h2^c,1597334677); }
+  h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);
+  h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);
+  return (4294967296*(2097151&h2)+(h1>>>0)).toString(16);
+}
+const roomId = code => 'bingo25-' + cyrb53(code,3) + cyrb53(code,11);
+
+/* ========== 狀態 ==========
+   房主掌控「公開狀態」（玩家、輪到誰、已選號碼、勝場）。
+   每個人的號碼盤只存在自己的瀏覽器裡，每次選號後各自回報連線數；
+   有人獲勝時才把盤面送出開牌。 */
+let peer=null, conn=null, conns=null, role=null, myId=null, myName='', myCode='';
+let state=null, leaving=false;
+let myBoard=makeBoard(), boardRound=null, reportedKey=null, revealedRound=null;
+let reports={}, checkTimer=null, seenNote=0;
+
+/* ========== 大廳 ========== */
+try{ $('nick').value = localStorage.getItem('bingo_nick') || localStorage.getItem('ox_nick') || ''; }catch(e){}
+$('joinBtn').onclick = () => {
+  const n=$('nick').value.trim(), c=$('code').value.trim();
+  if (!n) return lobbyMsg('請先輸入暱稱', true);
+  if (!c) return lobbyMsg('請輸入配對暗號', true);
+  myName=n; myCode=c;
+  try{ localStorage.setItem('bingo_nick', n); }catch(e){}
+  $('joinBtn').disabled = true;
+  lobbyMsg('連線中…');
+  tryHost(0);
+};
+['nick','code'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key==='Enter') $('joinBtn').click(); }));
+
+function lobbyMsg(t, err){ $('lobbyMsg').textContent=t; $('lobbyMsg').className='msg'+(err?' err':''); }
+function backToLobby(msg, err){
+  cleanup();
+  $('game').classList.add('hidden'); $('lobby').classList.remove('hidden');
+  $('joinBtn').disabled = false;
+  lobbyMsg(msg||'', err);
+}
+function cleanup(){
+  leaving = true;
+  clearTimeout(checkTimer);
+  try{ conn && conn.close(); }catch(e){}
+  try{ conns && conns.forEach(c=>c.close()); }catch(e){}
+  try{ peer && peer.destroy(); }catch(e){}
+  peer=conn=conns=role=myId=state=null;
+  boardRound=reportedKey=revealedRound=null;
+  setTimeout(()=>{ leaving=false; }, 50);
+}
+
+/* ========== 配對流程 ==========
+   先嘗試用暗號雜湊值註冊成「房主」；ID 已被占用 → 房主已存在，改以玩家身分連過去。 */
+function tryHost(attempt){
+  if (typeof Peer === 'undefined') return backToLobby('連線元件載入失敗，請確認網路後重新整理', true);
+  const p = new Peer(roomId(myCode), {debug:0});
+  peer = p;
+  p.on('open', () => { if (peer===p) becomeHost(); });
+  p.on('error', err => {
+    if (peer!==p) return;
+    if (err.type==='unavailable-id' && !role){ p.destroy(); joinAsGuest(attempt); }
+    else if (!role) backToLobby('連線失敗：'+err.type, true);
+    else if (err.type==='network' || err.type==='server-error') flash('與配對伺服器斷線，重試中…');
+  });
+  p.on('disconnected', () => { if (peer===p && role==='host' && !p.destroyed) setTimeout(()=>{ try{p.reconnect();}catch(e){} }, 1500); });
+}
+
+function joinAsGuest(attempt){
+  const p = new Peer({debug:0});
+  peer = p;
+  let timer;
+  const retry = () => {
+    clearTimeout(timer);
+    if (peer!==p) return;
+    p.destroy();
+    if (attempt < 3){ lobbyMsg('重新配對中…'); setTimeout(()=>tryHost(attempt+1), 1500); }
+    else backToLobby('配對失敗，請稍後再試或換一個暗號', true);
+  };
+  p.on('open', id => {
+    const c = p.connect(roomId(myCode), {reliable:true});
+    timer = setTimeout(() => { if (!c.open) retry(); }, 8000);
+    c.on('open', () => {
+      clearTimeout(timer);
+      conn=c; role='guest'; myId=id;
+      c.send({type:'hello', name:myName});
+    });
+    c.on('data', onGuestData);
+    c.on('close', () => { if (peer===p && !leaving && role==='guest') backToLobby('房主已離開，房間已解散'); });
+  });
+  p.on('error', err => {
+    if (peer!==p) return;
+    if (err.type==='peer-unavailable') retry();
+    else if (!role) backToLobby('連線失敗：'+err.type, true);
+  });
+}
+
+/* ========== 房主 ========== */
+const getP = id => state.players.find(p => p.id===id);
+const actives = () => state.players.filter(p => p.active);
+const isOver = () => state.winners.length > 0;
+
+function becomeHost(){
+  role='host'; myId='host'; conns=new Map();
+  state = { round:1, players:[], turn:null, starter:0, picked:[], checking:null,
+            winners:[], reveal:{}, vote:null, note:'', noteSeq:0 };
+  addPlayer('host', myName);
+  afterState(); showGame();
+  peer.on('connection', c => {
+    c.on('open', () => {
+      if (!state || state.players.length >= MAX_PLAYERS){
+        c.send({type:'full'}); setTimeout(()=>c.close(), 400); return;
+      }
+      conns.set(c.peer, c);
+    });
+    c.on('data', d => { if (conns && conns.get(c.peer)===c) onHostData(c.peer, d); });
+    c.on('close', () => {
+      if (!conns || conns.get(c.peer)!==c || leaving) return;
+      conns.delete(c.peer);
+      removePlayer(c.peer);
+    });
+  });
+}
+
+function onHostData(id, d){
+  if (!state || !d) return;
+  switch (d.type){
+    case 'hello':
+      if (getP(id)) return;
+      if (state.players.length >= MAX_PLAYERS){ const c=conns.get(id); c && c.send({type:'full'}); return; }
+      addPlayer(id, String(d.name||'玩家').slice(0,12));
+      note(getP(id).name + ' 加入了房間');
+      sync(); break;
+    case 'pick':   pickNum(id, Number(d.n)); break;
+    case 'report': onReport(id, d.round, d.k, Math.max(0, Math.min(12, d.lines|0))); break;
+    case 'reveal':
+      if (isOver() && d.round===state.round && Array.isArray(d.board) && d.board.length===25){
+        state.reveal[id] = d.board.map(Number); sync();
+      } break;
+    case 'newgame': requestNew(id); break;
+    case 'vote':    replyVote(id, !!d.accept); break;
+  }
+}
+
+function addPlayer(id, name){
+  const used = new Set(state.players.map(p=>p.color));
+  const color = COLORS.find(c => !used.has(c)) || COLORS[0];
+  const playing = state.picked.length===0 && !isOver();   // 開局後才加入 → 下一局才上場
+  state.players.push({id, name, wins:0, lines:0, active:playing, color});
+  if (!state.turn && playing) state.turn = id;
+}
+
+function nextActive(fromId){
+  const list = state.players, i = list.findIndex(p => p.id===fromId);
+  for (let j=1;j<=list.length;j++){ const p = list[(i+j+list.length)%list.length]; if (p.active) return p.id; }
+  return null;
+}
+
+function removePlayer(id){
+  const p = getP(id); if (!p) return;
+  if (state.turn===id){ const n = nextActive(id); state.turn = n===id ? null : n; }
+  state.players.splice(state.players.indexOf(p), 1);
+  if (!state.turn && actives().length) state.turn = actives()[0].id;
+  if (state.starter >= state.players.length) state.starter = 0;
+  note(p.name + ' 離開了房間');
+  if (state.vote){
+    state.vote.yes = state.vote.yes.filter(x => x!==id);
+    if (state.vote.by===id) state.vote = null;
+    else if (checkVote()) return;
+  }
+  if (state.checking){
+    state.checking.need = state.checking.need.filter(x => x!==id);
+    if (state.checking.need.every(x => x in reports)) return finishCheck();
+  }
+  sync();
+}
+
+function pickNum(id, n){
+  if (isOver() || state.checking || state.turn!==id || actives().length<2) return;
+  const p = getP(id); if (!p || !p.active) return;
+  if (!(n>=1 && n<=25) || state.picked.some(x => x.n===n)) return;
+  state.picked.push({n, by:id, c:p.color});
+  state.vote = null;
+  state.checking = { k:state.picked.length, by:id, need:actives().map(a=>a.id) };
+  reports = {};
+  if (state.checking.need.includes('host'))
+    onReport('host', state.round, state.checking.k, doneLines(myBoard, state.picked.map(x=>x.n)).length, true);
+  clearTimeout(checkTimer);
+  checkTimer = setTimeout(finishCheck, 5000);    // 有人沒回應也不會卡住
+  sync();
+}
+
+function onReport(id, round, k, lines, noFinish){
+  const ch = state.checking;
+  if (!ch || round!==state.round || k!==ch.k || !ch.need.includes(id)) return;
+  reports[id] = lines;
+  const p = getP(id); if (p) p.lines = lines;
+  if (!noFinish && ch.need.every(x => x in reports)) finishCheck();
+}
+
+function finishCheck(){
+  clearTimeout(checkTimer);
+  const ch = state.checking; if (!ch) return;
+  state.checking = null;
+  const winners = actives().filter(p => p.lines >= WIN_LINES);
+  if (winners.length){
+    state.winners = winners.map(p => p.id);
+    winners.forEach(p => p.wins++);
+    state.reveal = { host: myBoard.slice() };
+  } else {
+    state.turn = nextActive(ch.by);
+  }
+  sync();
+}
+
+function reset(){
+  clearTimeout(checkTimer);
+  state.round++;
+  state.picked=[]; state.checking=null; state.winners=[]; state.reveal={}; state.vote=null;
+  state.players.forEach(p => { p.active=true; p.lines=0; });
+  if (state.players.length){
+    state.starter = (state.starter+1) % state.players.length;   // 每局輪流先選
+    state.turn = state.players[state.starter].id;
+  }
+  sync();
+}
+
+function requestNew(id){
+  if (!getP(id)) return;
+  if (isOver() || state.picked.length===0) return reset();       // 已分勝負或還沒人選號 → 直接開
+  if (!state.vote) state.vote = {by:id, yes:[id]};
+  else if (!state.vote.yes.includes(id)) state.vote.yes.push(id);
+  if (!checkVote()) sync();
+}
+function checkVote(){
+  if (state.vote && actives().every(p => state.vote.yes.includes(p.id))){ reset(); return true; }
+  return false;
+}
+function replyVote(id, accept){
+  if (!state.vote || !getP(id)) return;
+  if (!accept){ note(getP(id).name + ' 拒絕開新局，繼續本局'); state.vote=null; sync(); return; }
+  if (!state.vote.yes.includes(id)) state.vote.yes.push(id);
+  if (!checkVote()) sync();
+}
+
+function note(t){ state.note=t; state.noteSeq++; }
+function sync(){
+  afterState(); render();
+  if (conns) conns.forEach(c => { if (c.open) c.send({type:'state', state}); });
+}
+
+/* ========== 玩家端 ========== */
+function onGuestData(d){
+  if (d.type==='full') return backToLobby('這個房間已滿 6 人，請換一個暗號', true);
+  if (d.type==='state'){
+    const first = !state;
+    state = d.state;
+    afterState();
+    if (first) showGame();
+    render();
+  }
+}
+
+// 收到新狀態後（房主、玩家共用）：換局就發新盤、需要回報就回報、要開牌就交出盤面
+function afterState(){
+  if (!state) return;
+  if (boardRound !== state.round){ myBoard = makeBoard(); boardRound = state.round; }
+  if (role!=='guest') return;
+  const ch = state.checking;
+  if (ch && ch.need.includes(myId)){
+    const key = state.round+'-'+ch.k;
+    if (reportedKey !== key){
+      reportedKey = key;
+      conn.send({type:'report', round:state.round, k:ch.k, lines:doneLines(myBoard, state.picked.map(x=>x.n)).length});
+    }
+  }
+  if (isOver() && revealedRound!==state.round && !(myId in state.reveal)){
+    revealedRound = state.round;
+    conn.send({type:'reveal', round:state.round, board:myBoard});
+  }
+}
+
+function act(msg){
+  if (!state) return;
+  if (role==='host') onHostData('host', msg); else conn && conn.open && conn.send(msg);
+}
+
+/* ========== 操作 ========== */
+$('newBtn').onclick = () => act({type:'newgame'});
+$('leaveBtn').onclick = () => backToLobby('');
+$('shuffleBtn').onclick = () => {
+  if (!canShuffle()) return;
+  myBoard = makeBoard();
+  render();
+};
+function canShuffle(){
+  const me = state && getP(myId);
+  return !!(me && me.active && state.picked.length===0 && !state.checking && !isOver());
+}
+
+/* ========== 畫面 ========== */
+const boardEl = $('board');
+for (let i=0;i<25;i++){
+  const b = document.createElement('div'); b.className='cell'; b.innerHTML='<span></span>';
+  b.onclick = () => { if (b.classList.contains('can')) act({type:'pick', n:myBoard[i]}); };
+  boardEl.appendChild(b);
+}
+
+let flashTimer;
+function flash(t){ const e=$('toast'); e.textContent=t; e.classList.add('show'); clearTimeout(flashTimer); flashTimer=setTimeout(()=>e.classList.remove('show'), 2500); }
+
+function showGame(){
+  $('lobby').classList.add('hidden'); $('game').classList.remove('hidden');
+  $('codeShow').textContent = myCode;
+  seenNote = state ? state.noteSeq : 0;
+  render();
+}
+
+const nameOf = id => { const p = getP(id); return p ? (id===myId ? '你' : p.name) : '（已離開）'; };
+function el(tag, cls, text){ const e=document.createElement(tag); if (cls) e.className=cls; if (text!=null) e.textContent=text; return e; }
+
+function render(){
+  if (!state) return;
+  const s = state, me = getP(myId);
+  if (!me) return;
+  if (s.noteSeq !== seenNote){ seenNote = s.noteSeq; if (s.note) flash(s.note); }
+
+  const pickedNums = s.picked.map(x => x.n);
+  const pickedMap = new Map(s.picked.map(x => [x.n, x]));
+  const over = isOver();
+  const enough = actives().length >= 2;
+
+  $('roundShow').textContent = '第 ' + s.round + ' 局・' + s.players.length + '/' + MAX_PLAYERS + ' 人';
+
+  // 玩家列
+  const pw = $('players'); pw.innerHTML='';
+  s.players.forEach(p => {
+    const d = el('div', 'pl'); d.style.setProperty('--c', p.color);
+    if (!p.active) d.classList.add('wait');
+    if (!over && enough && s.turn===p.id) d.classList.add('turn');
+    if (s.winners.includes(p.id)) d.classList.add('winner');
+    d.append(el('div','name', p.name));
+    if (p.id===myId) d.append(el('span','tag','你'));
+    else if (!p.active) d.append(el('span','tag w','下局'));
+    const m = el('div','meta');
+    const w = el('span'); w.append('🏆 贏 '); w.append(el('b',null,p.wins)); w.append(' 次');
+    const mb = el('span','mini-bingo');
+    'BINGO'.split('').forEach((ch,i) => { const x=el('i', i<p.lines?'on':'', ch); mb.append(x); });
+    m.append(w, mb); d.append(m); pw.append(d);
+  });
+
+  // 我的盤面
+  const myLines = doneLines(myBoard, pickedNums);
+  const lineCells = new Set(myLines.flat());
+  const last = s.picked.length ? s.picked[s.picked.length-1].n : null;
+  const myTurn = !over && !s.checking && enough && me.active && s.turn===myId;
+  [...boardEl.children].forEach((c,i) => {
+    const n = myBoard[i], pk = pickedMap.get(n);
+    c.firstChild.textContent = n;
+    c.classList.toggle('mark', !!pk);
+    if (pk) c.style.setProperty('--mc', pk.c); else c.style.removeProperty('--mc');
+    c.classList.toggle('line', lineCells.has(i));
+    c.classList.toggle('last', n===last);
+    c.classList.toggle('can', myTurn && !pk);
+  });
+  boardEl.classList.toggle('locked-out', !me.active);
+  const bw = $('bingoWord');
+  [...bw.children].forEach((x,i) => x.classList.toggle('on', i < myLines.length));
+  bw.classList.toggle('full', myLines.length >= WIN_LINES);
+
+  // 狀態文字
+  let t;
+  if (over){
+    const iWin = s.winners.includes(myId);
+    const others = s.winners.filter(id => id!==myId).map(nameOf);
+    if (iWin) t = '🎉 BINGO！你贏了！' + (others.length ? '（與 ' + others.join('、') + ' 同時連線）' : '');
+    else t = '😢 ' + others.join('、') + ' 搶先連成 5 條線！';
+  }
+  else if (!me.active) t = '本局已開始，下一局你就會加入';
+  else if (!enough) t = '把暗號告訴朋友，等待其他玩家加入…（2～6 人）';
+  else if (s.checking) t = '對號中…';
+  else if (myTurn) t = s.picked.length ? '輪到你選號！點盤面上的數字' : '輪到你先選號！（選號後就不能再換盤）';
+  else t = '等待 ' + nameOf(s.turn) + ' 選號…';
+  $('status').textContent = t;
+
+  // 已選號碼
+  const h = $('history'); h.innerHTML='';
+  if (!s.picked.length) h.append(el('span','empty','還沒有人選號'));
+  s.picked.forEach(x => { const c = el('div','h', x.n); c.style.setProperty('--mc', x.c); c.title = nameOf(x.by)+' 選的'; h.append(c); });
+
+  // 開新局投票
+  const bn = $('banner');
+  if (s.vote && !over){
+    bn.classList.remove('hidden'); bn.innerHTML='';
+    const need = actives().length, got = s.vote.yes.length;
+    if (s.vote.yes.includes(myId) || !me.active){
+      bn.append(nameOf(s.vote.by) + ' 提議放棄本局、開新局，等待其他人同意…（' + got + '/' + need + '）');
+    } else {
+      bn.append(nameOf(s.vote.by) + ' 提議放棄本局、開新局，同意嗎？（' + got + '/' + need + '）');
+      const btns = el('div','btns');
+      const y = el('button','ok','同意'); y.onclick = () => act({type:'vote', accept:true});
+      const n = el('button','no','拒絕'); n.onclick = () => act({type:'vote', accept:false});
+      btns.append(y,n); bn.append(btns);
+    }
+  } else bn.classList.add('hidden');
+
+  // 按鈕
+  const midGame = s.picked.length>0 && !over;
+  $('newBtn').textContent = midGame ? '提議開新局' : '開新局';
+  $('newBtn').disabled = s.players.length<2 || (midGame && !me.active);
+  $('shuffleBtn').disabled = !canShuffle();
+
+  // 開牌
+  const rw = $('revealWrap'), rv = $('reveal');
+  if (over){
+    rw.classList.remove('hidden'); rv.innerHTML='';
+    s.players.filter(p => p.id!==myId && p.active).forEach(p => {
+      const box = el('div','rv'); if (s.winners.includes(p.id)) box.classList.add('winner');
+      const tt = el('div','t', (s.winners.includes(p.id)?'👑 ':'') + p.name + ' ');
+      tt.append(el('small',null,p.lines + ' 條線')); box.append(tt);
+      const b = s.reveal[p.id];
+      if (!b) box.append(el('div','wait','開牌中…'));
+      else {
+        const lc = new Set(doneLines(b, pickedNums).flat());
+        const g = el('div','mini');
+        b.forEach((n,i) => {
+          const c = el('div', null, n), pk = pickedMap.get(n);
+          if (pk){ c.classList.add('mark'); c.style.setProperty('--mc', pk.c); }
+          if (lc.has(i)) c.classList.add('line');
+          g.append(c);
+        });
+        box.append(g);
+      }
+      rv.append(box);
+    });
+    if (!rv.children.length) rw.classList.add('hidden');
+  } else rw.classList.add('hidden');
+}
+
+window.addEventListener('beforeunload', () => { try{ peer && peer.destroy(); }catch(e){} });
+</script>
+</body>
+</html>
