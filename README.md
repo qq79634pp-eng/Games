@@ -2,7 +2,7 @@
 
 和朋友輸入同一個暗號就能連線對戰的 HTML 小遊戲，手機、電腦都能玩。
 
-**開始玩：** https://qq79634pp-eng.github.io/games/
+**開始玩：** https://qq79634pp-eng.github.io/Games/
 
 | 遊戲 | 人數 | 說明 |
 | --- | --- | --- |
