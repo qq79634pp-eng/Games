@@ -59,6 +59,14 @@
   .diffs button{background:#33384f;color:var(--text);padding:10px 14px;border:2px solid transparent}
   .diffs button.sel{border-color:var(--accent);background:#454b68}
   .go{background:var(--accent);color:#222;padding:12px 36px;font-size:18px}
+  .stages{display:flex;flex-direction:column;align-items:center;gap:4px}
+  .stages p{margin:0;font-size:12px}
+  .sgrid{display:grid;grid-template-columns:repeat(5,40px);gap:5px}
+  .sgrid button{padding:6px 0;font-size:14px;background:#33384f;color:var(--text);border:2px solid transparent;border-radius:8px}
+  .sgrid button.sel{border-color:var(--accent);background:#454b68}
+  .sgrid button.lock{opacity:.35}
+  .stages .sname{color:var(--text)!important}
+  .ver{font-size:12px;color:var(--muted);margin:-10px 0 14px}
   .help{font-size:12px !important;text-align:left;background:rgba(255,255,255,.05);border-radius:10px;padding:8px 12px;max-width:300px}
   .res{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:100%;max-width:300px}
   .res div{background:#262a3b;border-radius:10px;padding:8px}
@@ -79,7 +87,8 @@
 <div class="card" id="lobby">
   <a class="back" href="./">← 遊戲大廳</a>
   <h1>⚡ 閃電<b>小隊</b></h1>
-  <p class="sub">縱向捲軸射擊，擊破 3 關與各關 BOSS！兩人輸入同一個暗號即可連線合作、比分數；一個人也能按「單人出擊」直接玩（不用填暗號）。</p>
+  <p class="ver" id="ver"></p>
+  <p class="sub">縱向捲軸射擊，擊破 10 關與各關 BOSS，難度逐關提升！兩人輸入同一個暗號即可連線合作、比分數；一個人也能按「單人出擊」直接玩（不用填暗號）。</p>
   <label for="nick">你的暱稱</label>
   <input id="nick" maxlength="12" placeholder="例如：小明">
   <label for="code">配對暗號</label>
@@ -108,17 +117,27 @@
 
 <script>
 /* ================= 常數 ================= */
-const W = 360, H = 640, STEP = 1000/60, STAGE_LEN = 100;   // 每關 100 秒後出 BOSS
+const W = 360, H = 640, STEP = 1000/60, STAGE_LEN = 80;   // 每關 80 秒後出 BOSS
+const VERSION = 'v2.0';
 const DIFFS = {
   easy:   {name:'簡單', spd:.72, rate:.6,  extra:0},
   normal: {name:'普通', spd:1,   rate:1,   extra:0},
   hard:   {name:'困難', spd:1.22,rate:1.45,extra:1},
 };
+// 10 關：地圖、BOSS（bt=造型、tier=強化等級）、BOSS 血量、地面敵人種類
 const STAGES = [
-  {name:'綠野平原', boss:'鐵甲蟹'},
-  {name:'怒濤海域', boss:'海上要塞'},
-  {name:'敵軍要塞', boss:'空中母艦'},
+  {name:'綠野平原', boss:'鐵甲蟹',     bt:'boss1', tier:1, hp:700,  ground:'tank'},
+  {name:'怒濤海域', boss:'海上要塞',   bt:'boss2', tier:1, hp:1000, ground:'boat'},
+  {name:'敵軍要塞', boss:'空中母艦',   bt:'boss3', tier:1, hp:1400, ground:'tank'},
+  {name:'沙漠峽谷', boss:'沙暴巨蟹',   bt:'boss1', tier:2, hp:1300, ground:'tank'},
+  {name:'冰原基地', boss:'重裝直升機', bt:'boss4', tier:1, hp:1500, ground:'tank'},
+  {name:'熔岩地帶', boss:'熔岩要塞',   bt:'boss2', tier:2, hp:1800, ground:'tank'},
+  {name:'叢林河谷', boss:'叢林黑鷹',   bt:'boss4', tier:2, hp:1900, ground:'tank'},
+  {name:'夜之都市', boss:'鋼鐵巨蟹',   bt:'boss1', tier:3, hp:2200, ground:'tank'},
+  {name:'雷雲高空', boss:'雷霆母艦',   bt:'boss3', tier:2, hp:2500, ground:null},
+  {name:'敵軍總部', boss:'雷神核心',   bt:'boss5', tier:1, hp:3200, ground:'tank'},
 ];
+const LAST = STAGES.length - 1;
 const DEF = {
   fighter:{hp:2,  r:12, score:100},
   heli:   {hp:8,  r:15, score:300},
@@ -130,6 +149,11 @@ const DEF = {
   boss1:  {hp:700,  hw:58, hh:38, score:20000, ground:1, boss:1},
   boss2:  {hp:1000, hw:44, hh:86, score:30000, ground:1, boss:1},
   boss3:  {hp:1400, hw:100,hh:28, score:50000, boss:1},
+  jet:    {hp:4,  r:12, score:250},
+  gunship:{hp:30, r:22, score:1200},
+  fort:   {hp:45, r:22, score:1500, ground:1},
+  boss4:  {hp:1500, hw:62, hh:44, score:60000, boss:1},
+  boss5:  {hp:3200, hw:74, hh:62, score:150000, boss:1},
 };
 const TYPES = Object.keys(DEF);
 const $ = id => document.getElementById(id);
@@ -155,8 +179,10 @@ let snap = null, snapAt = 0;   // 玩家端收到的最新畫面
 
 function freshState(){
   return { names:[myName,null], wins:[0,0], clears:0, round:1, captain:0, diff:'normal',
-           phase:'wait', stage:0, pending:null, result:null, revived:null, solo:false, best:0 };
+           phase:'wait', stage:0, pending:null, result:null, revived:null, solo:false, best:0, startStage:0, unlocked:loadUnlock() };
 }
+function loadUnlock(){ try{ return Math.min(LAST, +localStorage.getItem('flash_unlock')||0); }catch(e){ return 0; } }
+function saveUnlock(n){ try{ localStorage.setItem('flash_unlock', String(n)); }catch(e){} }
 const mate = () => !!(state && (state.solo || state.names[1]));
 /* 單人模式：不建立連線，自己當房主在本機跑模擬 */
 function startSolo(){
@@ -180,6 +206,7 @@ $('joinBtn').onclick = () => {
   tryHost(0);
 };
 $('soloBtn').onclick = startSolo;
+$('ver').textContent = VERSION + '・新增：10 關、逐關變難、新敵人與 BOSS、可選起始關卡';
 ['nick','code'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key==='Enter') $('joinBtn').click(); }));
 function lobbyMsg(t, err){ $('lobbyMsg').textContent = t; $('lobbyMsg').className = 'msg'+(err?' err':''); }
 function backToLobby(msg, err){
@@ -252,6 +279,7 @@ function onHostData(c, d){
   else if (d.type==='in'){ if (G) guestInput(d); }
   else if (d.type==='diff'){ if (s.phase==='ready' && s.captain===1 && DIFFS[d.d]){ s.diff=d.d; sync(); } }
   else if (d.type==='start'){ if (s.phase==='ready' && s.captain===1) startRun(); }
+  else if (d.type==='stage'){ if (s.phase==='ready' && s.captain===1 && d.st>=0 && d.st<=s.unlocked){ s.startStage=d.st|0; sync(); } }
   else if (d.type==='newgame') requestNewGame(1);
   else if (d.type==='reply')   replyNewGame(1, !!d.accept);
 }
@@ -284,20 +312,28 @@ function newPlayer(i){
 function startRun(){
   G = {f:0, t:0, scroll:0, stage:0, eid:0, players:[newPlayer(0), state.solo ? Object.assign(newPlayer(1), {alive:false, out:true, lives:0, inv:0}) : newPlayer(1)], en:[], eb:[], ps:[], items:[], bombs:[],
        scrollV:1, ev:[], evi:0, warn:0, bossOn:false, bossDeadT:0, phaseT:0, overT:0, fxOut:[]};
-  state.phase='play'; state.stage=0; state.pending=null; state.result=null; state.revived=null;
-  startStage(0); sync();
+  const st0 = clamp(state.startStage|0, 0, state.unlocked|0);
+  G.players.forEach(p => { if (p.out) return; p.lvl = Math.min(5, 1 + Math.floor(st0*.6)); if (st0>=2){ p.mis='H'; p.mlvl=Math.min(4, Math.floor(st0/2)); } });
+  state.phase='play'; state.pending=null; state.result=null; state.revived=null; state.from=st0;
+  startStage(st0); sync();
 }
 function startStage(n){
   G.stage=n; G.t=0; G.en=[]; G.eb=[]; G.items=G.items.filter(i=>i.kind!=='medal'); G.ev=buildStage(n); G.evi=0;
   G.bossOn=false; G.bossDeadT=0; G.warn=0;
   state.stage=n;
+  // 逐關難度：子彈速度 +3.5%／關、開火頻率 +6%／關、第 7 關起彈數 +1
+  const b = DIFFS[state.diff] || DIFFS.normal;
+  G.dd = {spd: b.spd*(1+n*.035), rate: b.rate*(1+n*.06), extra: b.extra + (n>=6?1:0)};
+  if (n > (state.unlocked|0)){ state.unlocked = n; if (role==='host') saveUnlock(n); }
 }
-const D = () => DIFFS[state.diff] || DIFFS.normal;
+const D = () => (G && G.dd) || DIFFS[state.diff] || DIFFS.normal;
 const rateN = n => Math.max(6, Math.round(n / D().rate));
 const every = (e,n) => e.t % rateN(n) === 0;
 
 function spawn(type, x, y, o){
-  const d = DEF[type], hp = d.boss && state.solo ? Math.round(d.hp*.6) : d.hp;   // 單人模式 BOSS 血量 60%
+  const d = DEF[type], n = G.stage;
+  // 一般敵人血量每關 +8%；BOSS 用關卡表的血量，單人模式 60%
+  const hp = d.boss ? Math.round(STAGES[n].hp * (state.solo ? .6 : 1)) : Math.round(d.hp*(1+n*.08)*10)/10;
   const e = Object.assign({id:++G.eid, type, x, y, vx:0, vy:0, t:0, a:Math.PI/2, hit:0}, d, {hp, maxhp:hp}, o||{});
   G.en.push(e); return e;
 }
@@ -322,30 +358,38 @@ function ring(x,y,n,spd,off,kind){ for (let i=0;i<n;i++) shoot(x,y, off + i*Math
 /* ---------- 關卡腳本 ---------- */
 function buildStage(n){
   const ev=[]; const add=(t,f)=>ev.push({t:Math.round(t*60), f});
-  const ground = n===1 ? 'boat' : 'tank';
+  const S = STAGES[n], ground = S.ground, L = STAGE_LEN;
   const pats = [
     () => { const x0=rnd(70,W-70), dir=Math.random()<.5?-1:1;
             for (let i=0;i<5;i++) spawn('fighter', x0, -20-i*34, {path:'dive', ph:i*.5, dir, fireAt: 30+(Math.random()*50|0)}); },
-    () => { const x0=rnd(50,W-130), mx=rnd(-.3,.3);
+    () => { if (!ground) return spawnJets();
+            const x0=rnd(50,W-130), mx=rnd(-.3,.3);
             for (let i=0;i<3;i++) spawn(ground, x0+i*40, -30-i*30, {my:.35, mx: ground==='boat'? (i%2?.6:-.6) : mx}); },
     () => { const dir=Math.random()<.5?1:-1;
             for (let i=0;i<5;i++) spawn('fighter', dir>0? -20-i*30 : W+20+i*30, 50+i*14, {path:'side', dir, fireAt: 40+(Math.random()*40|0)}); },
     () => { spawn('heli', W*.28, -30, {ty:rnd(110,200), stay:280}); spawn('heli', W*.72, -60, {ty:rnd(110,200), stay:300}); },
     () => { for (let i=0;i<4;i++) spawn('fighter', 60+i*80, -20-(i%2)*30, {path:'uturn', dir: i<2?-1:1, fireAt: 50}); },
-    () => { spawn('turret', rnd(40,W/2-30), -30); spawn('turret', rnd(W/2+30,W-40), -70); },
+    () => { if (!ground) return spawn('gunship', rnd(80,W-80), -40, {ty:rnd(90,160)});
+            spawn('turret', rnd(40,W/2-30), -30); spawn('turret', rnd(W/2+30,W-40), -70); },
   ];
-  const gap = 3.4 - n*.35;
+  function spawnJets(){ const dir=Math.random()<.5?1:-1; for (let i=0;i<3;i++) spawn('jet', W/2 - dir*(110 - i*40), -30-i*40, {dir}); }
+  if (n>=3) pats.push(spawnJets);                                                       // 第 4 關起：高速噴射機
+  if (n>=5) pats.push(() => spawn('gunship', rnd(80,W-80), -40, {ty:rnd(90,160)}));     // 第 6 關起：重砲艇
+  if (n>=6 && ground) pats.push(() => spawn('fort', rnd(60,W-60), -40));                // 第 7 關起：地面要塞砲
+  const gap = 3.4 - n*.17;                                     // 出怪間隔逐關縮短
+  const dbl = n<2 ? 0 : Math.max(2, 5 - (n>>1));              // 第 3 關起：每幾波多一組敵人
   let k = 0;
-  for (let t=3; t<STAGE_LEN-5; t+=gap){
+  for (let t=3; t<L-5; t+=gap){
     const i = k++;
     add(t, () => pats[(i*5 + n*2 + (i>>2)) % pats.length]());
-    if (n===2 && i%3===1) add(t+gap/2, () => pats[(i+3) % pats.length]());
+    if (dbl && i%dbl===1) add(t+gap/2, () => pats[(i*3+n+1) % pats.length]());
   }
   const drops = ['P','S','P','B','P','S'];
-  [8,28,48,66,84,94].forEach((t,i) => add(t, () => spawn('carrier', rnd(60,W-60), -30, {drop:drops[i]})));
-  [[60],[38,78],[30,58,86]][n].forEach(t => add(t, () => spawn('bomber', rnd(90,W-90), -40)));
-  add(STAGE_LEN-3, () => { G.warn = 170; });
-  add(STAGE_LEN, () => { spawn('boss'+(n+1), W/2, -110); G.bossOn = true; });
+  [.08,.25,.42,.58,.74,.88].forEach((f,i) => add(f*L, () => spawn('carrier', rnd(60,W-60), -30, {drop:drops[i]})));
+  const nb = 1 + Math.floor(n/3);                              // 轟炸機數量逐關增加
+  for (let i=0;i<nb;i++) add(L*(i+1)/(nb+1), () => spawn('bomber', rnd(90,W-90), -40));
+  add(L-3, () => { G.warn = 170; });
+  add(L, () => { spawn(S.bt, W/2, -110, {tier:S.tier}); G.bossOn = true; });
   ev.sort((a,b)=>a.t-b.t);
   return ev;
 }
@@ -376,6 +420,21 @@ function upEnemy(e){
       if (e.y>20 && every(e,110)) fan(e.x,e.y,e.a,2.7,2+d.extra,9,0);
       break;
     case 'carrier': e.vy=1.1; e.vx=Math.sin(e.t*.015)*.8; break;
+    case 'jet':                     // 高速俯衝，到中段連射 3 發後轉彎離開
+      if (e.t<40){ e.vy=5; e.vx=0; } else { e.vy=Math.max(-1, 5-(e.t-40)*.15); e.vx=e.dir*Math.min(4,(e.t-40)*.12); }
+      e.a = Math.atan2(e.vy, e.vx||.001);
+      if (e.t>=34 && e.t<=46 && e.t%6===4 && e.y>0) fireAim(e.x,e.y,3.6,1+d.extra,6,0);
+      break;
+    case 'gunship':                 // 停在上方旋轉掃射
+      e.vy = e.y<e.ty ? 1.6 : (e.t>460 ? 1.4 : 0); e.vx = Math.sin(e.t*.015)*.7;
+      if (e.y>40 && every(e,11)) shoot(e.x,e.y,e.t*.11,2.2,0);
+      if (e.y>40 && every(e,130)) ring(e.x,e.y,8+d.extra*4,1.9,e.t*.03,1);
+      break;
+    case 'fort':                    // 地面要塞砲：環狀彈＋大型瞄準彈
+      e.vy = G.scrollV; e.a = aimAt(e.x,e.y);
+      if (e.y>20 && every(e,120)) ring(e.x,e.y,12+d.extra*4,2.2,e.t*.05,0);
+      if (e.y>20 && e.t%rateN(120)===60) fan(e.x,e.y,e.a,2.6,3,14,1);
+      break;
     case 'bomber':
       e.vy = e.y<120 ? 1.2 : (e.t>520 ? 1.2 : .12); e.vx = Math.sin(e.t*.01)*.5;
       if (e.y>40 && every(e,70)) fireAim(e.x,e.y+10,2.4,5+d.extra*2,13,1);
@@ -385,28 +444,51 @@ function upEnemy(e){
   e.x += e.vx; e.y += e.vy; if (e.hit>0) e.hit--;
 }
 function upBoss(e){
-  const d=D(), ph2 = e.hp < e.maxhp/2, stopY = e.type==='boss2'? 150 : 130;
+  const d=D(), tx=(e.tier||1)-1, ph2 = e.hp < e.maxhp/2, ph3 = e.hp < e.maxhp/3;
+  const air = e.type==='boss3' || e.type==='boss4' || e.type==='boss5';
+  const stopY = e.type==='boss2' ? 150 : e.type==='boss5' ? 150 : 130;
   e.vy = e.y<stopY ? 1.1 : 0;
-  e.vx = e.y>=stopY ? Math.cos(e.t*.012)*(e.type==='boss3'?1.1:.8) : 0;
+  e.vx = e.y>=stopY ? Math.cos(e.t*.012)*(e.type==='boss5' ? .5 : air ? 1.2 : .8) : 0;
   e.a = aimAt(e.x, e.y);
   if (e.y < stopY-10) return;
   e.p = (e.p||0) + 1;
-  const cyc = Math.floor(e.p/260)%3, k = e.p%260, x=e.x, y=e.y;
+  const R = n => rateN(n / (1 + .15*tx));          // 強化型 BOSS 開火更快
+  const cyc = Math.floor(e.p/260)%3, k = e.p%260, x=e.x, y=e.y, X = d.extra + tx;
   if (e.type==='boss1'){
-    if (cyc===0 && k%rateN(34)===0) fireAim(x,y+10,3,3+d.extra*2,12,0);
-    if (cyc===1 && k%rateN(46)===0) ring(x,y,14+d.extra*4,2.2,e.p*.05,0);
-    if (cyc===2 && k%rateN(7)===0){ shoot(x,y,e.p*.13,2.6,0); shoot(x,y,e.p*.13+Math.PI,2.6,0); }
-    if (ph2 && k%rateN(80)===0){ fireAim(x-50,y+20,2,3,18,1); fireAim(x+50,y+20,2,3,18,1); }
+    if (cyc===0 && k%R(34)===0) fireAim(x,y+10,3,3+X*2,12,0);
+    if (cyc===1 && k%R(46)===0) ring(x,y,14+X*4,2.2,e.p*.05,0);
+    if (cyc===2 && k%R(7)===0){ shoot(x,y,e.p*.13,2.6,0); shoot(x,y,e.p*.13+Math.PI,2.6,0); if (tx>=2){ shoot(x,y,e.p*.13+Math.PI/2,2.6,0); shoot(x,y,e.p*.13-Math.PI/2,2.6,0); } }
+    if (ph2 && k%R(80)===0){ fireAim(x-50,y+20,2,3+tx,18,1); fireAim(x+50,y+20,2,3+tx,18,1); }
   } else if (e.type==='boss2'){
-    if (cyc===0 && k%rateN(30)===0){ for (const [ox,oy] of [[-28,-45],[28,-45],[-28,40],[28,40]]) fireAim(x+ox,y+oy,2.8,1+d.extra,8,0); }
+    if (cyc===0 && k%R(30)===0){ for (const [ox,oy] of [[-28,-45],[28,-45],[-28,40],[28,40]]) fireAim(x+ox,y+oy,2.8,1+Math.min(1,X),8,0); }
     if (cyc===1 && k%rateN(10)===0) fan(x,y+80,Math.PI/2+Math.sin(e.p*.05)*.9,2.6,3,10,0);
-    if (cyc===2 && k%rateN(40)===0){ ring(x,y-60,12+d.extra*4,2.1,e.p*.03,0); ring(x,y+60,12+d.extra*4,2.1,-e.p*.03,0); }
-    if (ph2 && k%rateN(60)===0) fireAim(x,y+80,2.2,5,15,1);
-  } else {
-    if (cyc===0 && k%rateN(6)===0){ for (let j=0;j<3;j++) shoot(x,y+10,e.p*.09+j*Math.PI*2/3,2.5,0); }
-    if (cyc===1 && k%rateN(18)===0){ fireAim(x-80,y+6,3,3,10,0); fireAim(x+80,y+6,3,3,10,0); }
-    if (cyc===2){ if (k%rateN(48)===0) ring(x,y+10,20+d.extra*6,2,e.p*.02,1); if (k===60 || k===180){ spawn('fighter',40,-20,{path:'dive',ph:0,dir:1,fireAt:40}); spawn('fighter',W-40,-20,{path:'dive',ph:1,dir:-1,fireAt:40}); } }
-    if (ph2 && k%rateN(90)===0){ fireAim(x,y+20,2,7,10,1); }
+    if (cyc===2 && k%R(44)===0){ ring(x,y-60,12+X*3,2.1,e.p*.03,0); ring(x,y+60,12+X*3,2.1,-e.p*.03,0); }
+    if (ph2 && k%R(60)===0) fireAim(x,y+80,2.2,5+tx,15,1);
+  } else if (e.type==='boss3'){
+    if (cyc===0 && k%R(6)===0){ for (let j=0;j<3+tx;j++) shoot(x,y+10,e.p*.09+j*Math.PI*2/(3+tx),2.5,0); }
+    if (cyc===1 && k%R(18)===0){ fireAim(x-80,y+6,3,3+tx,10,0); fireAim(x+80,y+6,3,3+tx,10,0); }
+    if (cyc===2){ if (k%R(48)===0) ring(x,y+10,20+X*6,2,e.p*.02,1); if (k===60 || k===180){ spawn('fighter',40,-20,{path:'dive',ph:0,dir:1,fireAt:40}); spawn('fighter',W-40,-20,{path:'dive',ph:1,dir:-1,fireAt:40}); } }
+    if (ph2 && k%R(90)===0) fireAim(x,y+20,2,7+tx*2,10,1);
+  } else if (e.type==='boss4'){   // 重裝直升機：機砲連射、飛彈扇形、旋轉彈幕
+    if (cyc===0 && k%60<30 && k%R(5)===0){ fireAim(x-46,y+8,3.4,1,0,0); fireAim(x+46,y+8,3.4,1,0,0); }
+    if (cyc===1 && k%R(36)===0) fan(x,y+40,Math.PI/2,2.3,5+X*2,14,1);
+    if (cyc===2 && k%R(5)===0){ shoot(x,y,e.p*.17,2.4,0); shoot(x,y,-e.p*.17+Math.PI,2.4,0); }
+    if (ph2 && k%R(55)===0){ fireAim(x-46,y+8,2.8,3,12,0); fireAim(x+46,y+8,2.8,3,12,0); }
+    if (tx && k%R(130)===0) ring(x,y,16+X*2,2.1,e.p*.04,0);
+  } else {                        // 雷神核心：四臂旋轉，血量越低越兇
+    const arm = j => e.t*.012 + j*Math.PI/2, tip = j => [x+Math.cos(arm(j))*70, y+Math.sin(arm(j))*70];
+    if (!ph2){
+      if (k%R(24)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); fireAim(ax,ay,2.8,1+d.extra,8,0); }
+      if (k%R(90)===0) ring(x,y,18+X*4,2,e.p*.03,1);
+    } else if (!ph3){
+      if (k%R(6)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j),2.4,0); }
+      if (k%R(70)===0) fireAim(x,y+30,2.4,5+d.extra*2,12,1);
+    } else {
+      if (k%R(40)===0) ring(x,y,24+X*4,2.2,(e.p%80<40)?0:Math.PI/24,0);
+      if (k%R(8)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j)+Math.PI/4,2.6,0); }
+      if (k%R(60)===0) fireAim(x,y+30,2.6,5+d.extra*2,10,1);
+      if (k===100) for (let i=0;i<3;i++) spawn('jet', 60+i*120, -30-i*30, {dir: i<1?1:-1});
+    }
   }
 }
 
@@ -565,7 +647,7 @@ function simStep(){
     if (g.bossDeadT===0) stageClear();
   }
   if (state.phase==='clear' && --g.phaseT<=0){
-    if (g.stage<2){ startStage(g.stage+1); state.phase='play'; state.revived=null; sync(); }
+    if (g.stage<LAST){ startStage(g.stage+1); state.phase='play'; state.revived=null; state.bonus=0; sync(); }
     else finish(true);
   }
   if (g.overT>0 && --g.overT===0 && state.phase==='play') finish(false);
@@ -573,14 +655,15 @@ function simStep(){
 function stageClear(){
   const g=G; g.eb=[]; g.en=[]; g.phaseT = 250;
   const rev = [];
-  g.players.forEach((p,i) => { if (state.solo && i===1) return; if (p.out){ p.out=false; p.lives=2; respawn(i); rev.push(i); } else if (!p.alive){ respawn(i); } });
-  state.phase='clear'; state.revived = rev; sync();
+  const bonus = g.stage%3===2 ? 1 : 0;                       // 過第 3、6、9 關：每人 +1 架（最多 5 架）
+  g.players.forEach((p,i) => { if (state.solo && i===1) return; if (bonus && !p.out) p.lives = Math.min(5, p.lives+1); if (p.out){ p.out=false; p.lives=2; respawn(i); rev.push(i); } else if (!p.alive){ respawn(i); } });
+  state.phase='clear'; state.revived = rev; state.bonus = bonus; sync();
 }
 function finish(win){
   const sc = G.players.map(p=>Math.round(p.score));
   const s = state;
   s.phase = win? 'win' : 'over'; s.pending=null;
-  s.result = {scores:sc, stage:G.stage, win};
+  s.result = {scores:sc, stage:G.stage, win, from:s.from|0};
   if (s.solo) s.best = Math.max(s.best||0, sc[0]);
   else if (sc[0]!==sc[1]) s.wins[sc[0]>sc[1]?0:1]++;
   if (win) s.clears++;
@@ -720,36 +803,68 @@ addEventListener('resize', fit);
 
 function hh(a,b){ let h = Math.imul(a,374761393) ^ Math.imul(b+7,668265263); h = Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296; }
 
+// 每關的底色、色塊、細節色
+const BG = [
+  ['#557a3c','#4b6e34','#6b8f45','#2f4f22'],   // 1 綠野平原
+  ['#1f4e79','#1b4570','#2a5d8f','#d9c48c'],   // 2 怒濤海域
+  ['#4a4f57','#3a3f46','#2b2f35','#ffd43b'],   // 3 敵軍要塞
+  ['#c9a46a','#b8925a','#d8b67c','#7a5a36'],   // 4 沙漠峽谷
+  ['#dfe7ee','#c9d6e2','#eef3f7','#2f5d46'],   // 5 冰原基地
+  ['#3a2a26','#2e211e','#4a3530','#ff6b1a'],   // 6 熔岩地帶
+  ['#2f5a2a','#264d22','#3b6b33','#173516'],   // 7 叢林河谷
+  ['#23262e','#2c303a','#1b1d23','#ffd76a'],   // 8 夜之都市
+  ['#6fa8dc','#82b6e3','#5b97cf','#ffffff'],   // 9 雷雲高空
+  ['#3b2326','#331d20','#4a2b2f','#ff4d4d'],   // 10 敵軍總部
+];
 function drawBg(st, s){
-  const c = ctx, T=40;
-  c.fillStyle = ['#557a3c','#1f4e79','#4a4f57'][st]; c.fillRect(0,0,W,H);
+  const c = ctx, T=40, P = BG[st] || BG[0];
+  c.fillStyle = P[0]; c.fillRect(0,0,W,H);
   const r0 = Math.floor(s/T), r1_ = Math.floor((s+H)/T)+1;
   for (let r=r0; r<=r1_; r++){
     const y = H - (r*T + T - s);
     for (let col=0; col<9; col++){
       const x = col*T, v = hh(r,col);
-      if (st===0){
-        if (v<.22){ c.fillStyle='#4b6e34'; c.fillRect(x,y,T,T); }
-        else if (v<.3){ c.fillStyle='#6b8f45'; c.fillRect(x+4,y+4,T-8,T-8); }
-        if (v>.93){ c.fillStyle='#2f4f22'; c.beginPath(); c.arc(x+12,y+14,9,0,7); c.arc(x+26,y+24,11,0,7); c.fill(); }
-      } else if (st===1){
-        if (v<.18){ c.strokeStyle='rgba(180,220,255,.25)'; c.lineWidth=2; c.beginPath(); c.arc(x+20,y+24,10,Math.PI*1.15,Math.PI*1.85); c.stroke(); }
-      } else {
-        c.strokeStyle='rgba(0,0,0,.25)'; c.lineWidth=1; c.strokeRect(x+.5,y+.5,T,T);
-        if (v<.08){ c.fillStyle='#3a3f46'; c.fillRect(x+6,y+8,28,24); c.fillStyle='#2b2f35'; for(let k=0;k<4;k++) c.fillRect(x+9,y+11+k*6,22,2); }
-        else if (v>.95){ c.fillStyle='#ffd43b'; c.fillRect(x+18,y+18,4,4); }
+      switch(st){
+        case 0: case 6:   // 草地／叢林
+          if (v<.22){ c.fillStyle=P[1]; c.fillRect(x,y,T,T); } else if (v<.3){ c.fillStyle=P[2]; c.fillRect(x+4,y+4,T-8,T-8); }
+          if (v > (st===6 ? .7 : .93)){ c.fillStyle=P[3]; c.beginPath(); c.arc(x+12,y+14,9,0,7); c.arc(x+26,y+24,11,0,7); c.fill(); }
+          break;
+        case 1:           // 海浪
+          if (v<.18){ c.strokeStyle='rgba(180,220,255,.25)'; c.lineWidth=2; c.beginPath(); c.arc(x+20,y+24,10,Math.PI*1.15,Math.PI*1.85); c.stroke(); }
+          break;
+        case 2: case 9:   // 金屬地板
+          c.strokeStyle='rgba(0,0,0,.25)'; c.lineWidth=1; c.strokeRect(x+.5,y+.5,T,T);
+          if (v<.08){ c.fillStyle=P[1]; c.fillRect(x+6,y+8,28,24); c.fillStyle=P[2]; for(let k=0;k<4;k++) c.fillRect(x+9,y+11+k*6,22,2); }
+          else if (v>.95){ c.fillStyle=P[3]; c.fillRect(x+18,y+18,4,4); }
+          break;
+        case 3:           // 沙丘與岩石
+          if (v<.2){ c.strokeStyle=P[1]; c.lineWidth=3; c.beginPath(); c.arc(x+20,y+30,16,Math.PI*1.1,Math.PI*1.9); c.stroke(); }
+          else if (v>.95){ c.fillStyle=P[3]; c.beginPath(); c.ellipse(x+20,y+20,12,8,v*3,0,7); c.fill(); }
+          break;
+        case 4:           // 雪地與松樹
+          if (v<.2){ c.fillStyle=P[1]; c.fillRect(x,y,T,T); }
+          if (v>.9){ c.fillStyle=P[3]; c.beginPath(); c.moveTo(x+20,y+4); c.lineTo(x+32,y+30); c.lineTo(x+8,y+30); c.fill(); c.fillStyle='#fff'; c.fillRect(x+16,y+12,8,2); }
+          break;
+        case 5:           // 熔岩裂縫
+          if (v<.25){ c.fillStyle=P[1]; c.fillRect(x,y,T,T); }
+          if (v>.9){ c.strokeStyle=P[3]; c.lineWidth=2; c.beginPath(); c.moveTo(x+4,y+10); c.lineTo(x+18,y+22); c.lineTo(x+34,y+16); c.stroke(); }
+          break;
+        case 7:           // 大樓與窗戶
+          if (v<.45){ c.fillStyle=P[1]; c.fillRect(x+3,y+3,T-6,T-6); if (v<.3){ c.fillStyle=P[3]; for (let k=0;k<3;k++) if (hh(r*7+k,col)<.5) c.fillRect(x+8+k*9,y+10+(k%2)*12,4,4); } }
+          break;
+        case 8:           // 雲朵
+          if (v<.08){ c.fillStyle='rgba(255,255,255,.55)'; c.beginPath(); c.arc(x+14,y+20,14,0,7); c.arc(x+30,y+16,16,0,7); c.arc(x+44,y+22,12,0,7); c.fill(); }
+          break;
       }
     }
-    if (st===0){   // 蜿蜒的土路
-      const rx = 180 + Math.sin(r*.12)*110;
-      c.fillStyle='#a08454'; c.fillRect(rx-16,y,32,T+1);
-      c.fillStyle='#8c7246'; c.fillRect(rx-2,y+6,4,14);
-    } else if (st===1){   // 小島
-      if (hh(r,99)<.06){ const ix = 40 + hh(r,98)*280; c.fillStyle='#d9c48c'; c.beginPath(); c.ellipse(ix,y+20,46,30,0,0,7); c.fill(); c.fillStyle='#4f8a3a'; c.beginPath(); c.ellipse(ix,y+18,32,20,0,0,7); c.fill(); }
-    } else {      // 跑道
-      c.fillStyle='#3d4148'; c.fillRect(150,y,60,T+1);
-      if (r%2===0){ c.fillStyle='#e9ecef'; c.fillRect(178,y+6,4,22); }
-    }
+    // 每關的長條地景
+    if (st===0 || st===3){ const rx = 180 + Math.sin(r*.12)*110; c.fillStyle = st ? '#a07c4a' : '#a08454'; c.fillRect(rx-16,y,32,T+1); c.fillStyle = st ? '#8a6a3e' : '#8c7246'; c.fillRect(rx-2,y+6,4,14); }
+    else if (st===1){ if (hh(r,99)<.06){ const ix = 40 + hh(r,98)*280; c.fillStyle='#d9c48c'; c.beginPath(); c.ellipse(ix,y+20,46,30,0,0,7); c.fill(); c.fillStyle='#4f8a3a'; c.beginPath(); c.ellipse(ix,y+18,32,20,0,0,7); c.fill(); } }
+    else if (st===4){ const rx = 180 + Math.sin(r*.1)*90; c.fillStyle='#b0c4d6'; c.fillRect(rx-20,y,40,T+1); }
+    else if (st===5){ const rx = 180 + Math.sin(r*.09)*120; c.fillStyle='#ff6b1a'; c.fillRect(rx-22,y,44,T+1); c.fillStyle='#ffd43b'; c.fillRect(rx-6,y,12,T+1); }
+    else if (st===6){ const rx = 180 + Math.sin(r*.11)*100; c.fillStyle='#3d7aa8'; c.fillRect(rx-24,y,48,T+1); c.fillStyle='rgba(255,255,255,.15)'; if (r%2) c.fillRect(rx-6,y+8,12,3); }
+    else if (st===7){ c.fillStyle='#16181d'; c.fillRect(160,y,40,T+1); if (r%3===0) c.fillRect(0,y+16,W,8); if (r%2===0){ c.fillStyle='#ffd43b'; c.fillRect(178,y+6,4,18); } }
+    else if (st===2 || st===9){ c.fillStyle = st===9 ? '#2a1517' : '#3d4148'; c.fillRect(150,y,60,T+1); if (r%2===0){ c.fillStyle = st===9 ? '#ff4d4d' : '#e9ecef'; c.fillRect(178,y+6,4,22); } }
   }
 }
 
@@ -769,8 +884,13 @@ function drawPlayer(x,y,col,inv,f){
   c.restore();
 }
 function turretOn(c,a,len,col){ c.save(); c.rotate(a); c.fillStyle=col; c.fillRect(0,-2.5,len,5); c.restore(); }
+// 強化型 BOSS 換色：[本體, 深色]
+const TIERCOL = {boss1:[null,['#8a7350','#5a4a30'],['#c2a368','#8a6d3e'],['#6c7a89','#3d4852']], boss2:[null,['#6c757d','#868e96'],['#3b2a2a','#5a3a32']],
+  boss3:[null,['#343a40','#495057'],['#3b2f5c','#5a4a8a']], boss4:[null,['#5f6b4e','#454f38'],['#2b2f33','#43494f']]};
+let curTier = 1;
 function drawEnemy(e, f){
   const [ti,x,y,,,a,hit,et] = e, type = TYPES[ti], c=ctx, H_ = hit>0;
+  const TC = (TIERCOL[type]||[])[curTier] || ['#888','#555'];
   const C = (col) => H_ ? '#fff' : col;
   c.save(); c.translate(x,y);
   switch(type){
@@ -804,27 +924,60 @@ function drawEnemy(e, f){
       c.fillStyle=C('#343a40'); c.fillRect(-26,-6,8,14); c.fillRect(18,-6,8,14);
       c.fillStyle='#ff8787'; c.beginPath(); c.arc(0,12,3,0,7); c.fill(); break;
     case 'boss1': {
-      c.strokeStyle=C('#5a4a30'); c.lineWidth=7; c.lineCap='round';
+      c.strokeStyle=C(TC[1]); c.lineWidth=7; c.lineCap='round';
       for (let i=0;i<3;i++){ const w=Math.sin(et*.1+i)*5; c.beginPath(); c.moveTo(-50,-22+i*22); c.lineTo(-74,-30+i*26+w); c.moveTo(50,-22+i*22); c.lineTo(74,-30+i*26-w); c.stroke(); }
-      c.fillStyle=C('#8a7350'); c.beginPath(); c.roundRect ? c.roundRect(-58,-38,116,76,18) : c.rect(-58,-38,116,76); c.fill();
+      c.fillStyle=C(TC[0]); c.beginPath(); c.roundRect ? c.roundRect(-58,-38,116,76,18) : c.rect(-58,-38,116,76); c.fill();
       c.fillStyle=C('#6e5b3d'); c.beginPath(); c.arc(-46,36,14,0,7); c.arc(46,36,14,0,7); c.fill();
       c.fillStyle=C('#5a4a30'); for (const ox of [-40,40]){ c.beginPath(); c.arc(ox,-8,9,0,7); c.fill(); }
       turretOn(c,a,34,C('#3b3020')); c.fillStyle=C('#4d3f28'); c.beginPath(); c.arc(0,4,18,0,7); c.fill();
       c.fillStyle='#ff6b6b'; c.beginPath(); c.arc(0,4,6+Math.sin(et*.15)*2,0,7); c.fill(); break; }
     case 'boss2': {
       c.fillStyle='rgba(255,255,255,.3)'; c.beginPath(); c.moveTo(-40,-80); c.lineTo(0,-100); c.lineTo(40,-80); c.fill();
-      c.fillStyle=C('#6c757d'); c.beginPath(); c.moveTo(0,98); c.lineTo(44,50); c.lineTo(44,-84); c.lineTo(-44,-84); c.lineTo(-44,50); c.closePath(); c.fill();
-      c.fillStyle=C('#868e96'); c.fillRect(-30,-70,60,120);
+      c.fillStyle=C(TC[0]); c.beginPath(); c.moveTo(0,98); c.lineTo(44,50); c.lineTo(44,-84); c.lineTo(-44,-84); c.lineTo(-44,50); c.closePath(); c.fill();
+      c.fillStyle=C(TC[1]); c.fillRect(-30,-70,60,120);
       c.fillStyle=C('#495057'); c.fillRect(-16,-14,32,30);
       for (const [ox,oy] of [[-28,-45],[28,-45],[-28,40],[28,40],[0,74]]){ c.save(); c.translate(ox,oy); turretOn(c,a,15,C('#212529')); c.fillStyle=C('#343a40'); c.beginPath(); c.arc(0,0,8,0,7); c.fill(); c.restore(); }
       c.fillStyle='#ffd43b'; c.fillRect(-6,-6,12,4); break; }
     case 'boss3': {
       c.fillStyle='rgba(0,0,0,.3)'; c.save(); c.translate(20,30); c.beginPath(); c.moveTo(0,60); c.lineTo(110,0); c.lineTo(0,-50); c.lineTo(-110,0); c.closePath(); c.fill(); c.restore();
-      c.fillStyle=C('#343a40'); shipPath(c,[0,62, 30,18, 108,4, 108,-14, 30,-26, 20,-58, -20,-58, -30,-26, -108,-14, -108,4, -30,18]); c.fill();
-      c.fillStyle=C('#495057'); c.fillRect(-90,-10,20,14); c.fillRect(70,-10,20,14);
+      c.fillStyle=C(TC[0]); shipPath(c,[0,62, 30,18, 108,4, 108,-14, 30,-26, 20,-58, -20,-58, -30,-26, -108,-14, -108,4, -30,18]); c.fill();
+      c.fillStyle=C(TC[1]); c.fillRect(-90,-10,20,14); c.fillRect(70,-10,20,14);
       c.fillStyle=C('#212529'); c.fillRect(-84,4,8,10); c.fillRect(76,4,8,10);
       const pr = 12+Math.sin(et*.12)*3; c.fillStyle='rgba(255,80,80,.35)'; c.beginPath(); c.arc(0,4,pr+8,0,7); c.fill();
       c.fillStyle='#ff6b6b'; c.beginPath(); c.arc(0,4,pr,0,7); c.fill(); break; }
+    case 'jet':
+      c.rotate(a - Math.PI/2); c.fillStyle=C('#868e96'); shipPath(c,[0,16, 3,4, 11,-8, 11,-12, 3,-8, 2,-16, -2,-16, -3,-8, -11,-12, -11,-8, -3,4]); c.fill();
+      c.fillStyle='#ffa94d'; c.fillRect(-1.5,-20,3,4); break;
+    case 'gunship':
+      c.fillStyle='rgba(0,0,0,.25)'; c.beginPath(); c.arc(12,16,22,0,7); c.fill();
+      c.fillStyle=C('#5c5f66'); c.beginPath(); c.arc(0,0,22,0,7); c.fill();
+      c.fillStyle=C('#3d4046'); for (let j=0;j<4;j++){ const g=et*.11+j*Math.PI/2; c.save(); c.rotate(g); c.fillRect(14,-4,14,8); c.restore(); }
+      c.fillStyle='#ff8787'; c.beginPath(); c.arc(0,0,7,0,7); c.fill(); break;
+    case 'fort':
+      c.fillStyle=C('#6b6f75'); c.beginPath(); for (let j=0;j<8;j++){ const g=j*Math.PI/4+Math.PI/8; c.lineTo(Math.cos(g)*26,Math.sin(g)*26); } c.closePath(); c.fill();
+      c.strokeStyle='#3d4046'; c.lineWidth=3; c.stroke();
+      turretOn(c,a,26,C('#2b2d31')); c.fillStyle=C('#43474d'); c.beginPath(); c.arc(0,0,12,0,7); c.fill();
+      c.fillStyle='#ffd43b'; c.beginPath(); c.arc(0,0,4,0,7); c.fill(); break;
+    case 'boss4': {   // 重裝直升機（雙旋翼）
+      c.fillStyle='rgba(0,0,0,.25)'; c.beginPath(); c.ellipse(18,26,30,52,0,0,7); c.fill();
+      c.fillStyle=C(TC[1]); c.fillRect(-62,-6,124,12);
+      for (const ox of [-46,46]){ c.fillStyle=C('#2b2d31'); c.fillRect(ox-8,-12,16,30); c.fillStyle='#ffa94d'; c.fillRect(ox-2,18,4,4); }
+      c.fillStyle=C(TC[0]); c.beginPath(); c.ellipse(0,0,24,50,0,0,7); c.fill();
+      c.fillStyle=C(TC[1]); c.fillRect(-5,-84,10,40); c.fillRect(-16,-84,32,6);
+      c.fillStyle='#a5d8ff'; c.beginPath(); c.ellipse(0,30,12,12,0,0,7); c.fill();
+      for (const oy of [-26,22]){ c.fillStyle='rgba(30,30,30,.25)'; c.beginPath(); c.arc(0,oy,44,0,7); c.fill();
+        c.strokeStyle='rgba(20,20,20,.75)'; c.lineWidth=4; const ra=f*.5+(oy>0?.8:0);
+        c.beginPath(); for (let j=0;j<3;j++){ const g=ra+j*2.094; c.moveTo(0,oy); c.lineTo(Math.cos(g)*44,oy+Math.sin(g)*44); } c.stroke(); }
+      c.fillStyle='#ff6b6b'; c.beginPath(); c.arc(0,-2,6+Math.sin(et*.15)*2,0,7); c.fill(); break; }
+    case 'boss5': {   // 雷神核心（四臂旋轉）
+      c.fillStyle='rgba(0,0,0,.3)'; c.beginPath(); c.arc(18,26,60,0,7); c.fill();
+      c.fillStyle=C('#2b2d42'); c.beginPath(); for (let j=0;j<6;j++){ const g=j*Math.PI/3; c.lineTo(Math.cos(g)*58,Math.sin(g)*58); } c.closePath(); c.fill();
+      c.strokeStyle='#4c4f6e'; c.lineWidth=4; c.stroke();
+      for (let j=0;j<4;j++){ const g=et*.012+j*Math.PI/2, ax=Math.cos(g)*70, ay=Math.sin(g)*70;
+        c.strokeStyle=C('#5c5f80'); c.lineWidth=10; c.beginPath(); c.moveTo(0,0); c.lineTo(ax,ay); c.stroke();
+        c.fillStyle=C('#3d405b'); c.beginPath(); c.arc(ax,ay,13,0,7); c.fill(); c.fillStyle='#ffd43b'; c.beginPath(); c.arc(ax,ay,5,0,7); c.fill(); }
+      const pr = 22+Math.sin(et*.1)*4; c.fillStyle='rgba(116,192,252,.35)'; c.beginPath(); c.arc(0,0,pr+14,0,7); c.fill();
+      c.fillStyle='#74c0fc'; c.beginPath(); c.arc(0,0,pr,0,7); c.fill(); c.fillStyle='#e7f5ff'; c.beginPath(); c.arc(0,0,pr*.45,0,7); c.fill(); break; }
   }
   c.restore();
 }
@@ -878,10 +1031,10 @@ function draw(){
   const v = role==='host' ? (G ? makeSnapLocal() : null) : snap;
   updHud(v);
   if (!ctx || !ctx.fillRect) return;
-  if (!v){ drawBg(state.stage||0, stepN*.5); return; }
+  if (!v){ drawBg(state.phase==='ready' ? (state.startStage|0) : (state.stage||0), stepN*.5); return; }
   const dt = role==='host' ? 0 : clamp((performance.now()-snapAt)/STEP, 0, 8);
   const ex = a => [a[0]+a[2]*dt, a[1]+a[3]*dt];
-  drawBg(v.st, v.s + v.sv*dt);
+  curTier = STAGES[v.st].tier; drawBg(v.st, v.s + v.sv*dt);
   const E = v.E.map(e => { const [x,y]=[e[1]+e[3]*dt, e[2]+e[4]*dt]; return [e[0],x,y,e[3],e[4],e[5],e[6],e[7]]; });
   for (const e of E) if (DEF[TYPES[e[0]]].ground) drawEnemy(e, v.f);
   for (const it of v.I){ if (it[0]==='medal'){ const [x,y]=[it[1],it[2]+v.sv*dt]; drawItem(['medal',x,y]); } }
@@ -899,7 +1052,7 @@ function draw(){
   for (const b of v.B){ const [x,y]=ex(b); drawBullet([x,y,0,0,b[4]]); }
   drawFx();
   // 文字
-  if (state.phase==='play' && v.t<150) { txt('STAGE '+(v.st+1), W/2, H*.4, 34, '#ffd43b'); txt(STAGES[v.st].name, W/2, H*.4+36, 18, '#fff'); }
+  if (state.phase==='play' && v.t<150) { txt('STAGE '+(v.st+1)+' / '+STAGES.length, W/2, H*.4, 34, '#ffd43b'); txt(STAGES[v.st].name, W/2, H*.4+36, 18, '#fff'); }
   if (v.wn>0 && (v.f>>4)%2===0){ txt('⚠ WARNING ⚠', W/2, H*.38, 34, '#ff6b6b'); txt('BOSS：'+STAGES[v.st].boss, W/2, H*.38+36, 17, '#fff'); }
   if (v.bh>=0){ ctx.fillStyle='rgba(0,0,0,.5)'; ctx.fillRect(40,8,W-80,8); ctx.fillStyle='#ff6b6b'; ctx.fillRect(40,8,(W-80)*v.bh/100,8);
     ctx.font='bold 10px system-ui'; ctx.fillStyle='#fff'; ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillText(STAGES[v.st].boss,40,19); }
@@ -947,9 +1100,9 @@ function renderMeta(){
   });
   $('pl1').classList.toggle('hidden', !!s.solo); $('pl0').parentNode.classList.toggle('one', !!s.solo);
   $('pl0').querySelector('.wn').classList.toggle('hidden', !!s.solo);
-  if (s.solo) $('roundShow').textContent = `單人模式・${(DIFFS[s.diff]||DIFFS.normal).name}` + (s.phase==='play'||s.phase==='clear' ? `・第 ${s.stage+1} 關` : '') + (s.best ? `・最高分 ${s.best.toLocaleString()}` : '');
+  if (s.solo) $('roundShow').textContent = `單人模式・${(DIFFS[s.diff]||DIFFS.normal).name}` + (s.phase==='play'||s.phase==='clear' ? `・第 ${s.stage+1}/${STAGES.length} 關` : '') + (s.best ? `・最高分 ${s.best.toLocaleString()}` : '');
   else $('roundShow').textContent = s.names[1]
-    ? `第 ${s.round} 局・隊長：${nm(cap)}・${(DIFFS[s.diff]||DIFFS.normal).name}` + (s.phase==='play'||s.phase==='clear' ? `・第 ${s.stage+1} 關` : '') + (s.clears? `・通關 ${s.clears} 次`:'')
+    ? `第 ${s.round} 局・隊長：${nm(cap)}・${(DIFFS[s.diff]||DIFFS.normal).name}` + (s.phase==='play'||s.phase==='clear' ? `・第 ${s.stage+1}/${STAGES.length} 關` : '') + (s.clears? `・通關 ${s.clears} 次`:'')
     : '等待隊友';
   $('newBtn').disabled = !mate() || s.phase==='ready' || s.phase==='wait';
   $('bombBtn').classList.toggle('hidden', s.phase!=='play');
@@ -967,22 +1120,35 @@ function renderMeta(){
       ds.append(b);
     }
     ov.append(ds);
+    // 起始關卡：可從曾經到達過的關卡出發（越後面起始火力越強）
+    const sw = el('div','stages'); sw.append(el('p',null,'起始關卡（已到達 ' + ((s.unlocked|0)+1) + ' 關）'));
+    const sg = el('div','sgrid');
+    STAGES.forEach((S,i) => {
+      const lock = i > (s.unlocked|0), b = el('button', (i===(s.startStage|0)?'sel':'') + (lock?' lock':''), lock ? '🔒' : String(i+1));
+      b.title = S.name; b.disabled = lock || cap!==mySlot;
+      b.onclick = () => { if (role==='host'){ s.startStage=i; sync(); } else conn.send({type:'stage', st:i}); };
+      sg.append(b);
+    });
+    sw.append(sg, el('p','sname', `第 ${(s.startStage|0)+1} 關・${STAGES[s.startStage|0].name}（BOSS：${STAGES[s.startStage|0].boss}）`));
+    ov.append(sw);
     if (cap===mySlot){ const g = el('button','go','出擊！'); g.onclick = () => { if (role==='host') startRun(); else conn.send({type:'start'}); }; ov.append(g); }
     const help = el('p','help');
     help.innerHTML = '📱 手指在畫面任意處拖曳移動，自動射擊，右下角 💣 投彈<br>⌨️ 方向鍵／WASD 移動，空白鍵投彈（滑鼠也能拖曳）<br>'+
       '<b style="color:#fa5252">P</b>／<b style="color:#339af0">P</b> 紅藍交替：同色升級、異色換武器<br>'+
       '<b style="color:#fcc419">H</b> 追蹤彈／<b style="color:#51cf66">M</b> 直射彈・<b style="color:#be4bdb">B</b> 炸彈・金幣加分<br>'+
-      (s.solo ? '共 3 架，全部被擊落就結束' : '每人 3 架，被擊落後隊友撐到過關就能救你回來');
+      (s.solo ? '共 3 架，全部被擊落就結束' : '每人 3 架，被擊落後隊友撐到過關就能救你回來') + '<br>每過 3 關每人 +1 架（最多 5 架）';
     ov.append(help);
     if (toastT) ov.append(el('p',null,toastT));
   } else if (s.phase==='clear'){
     ov.style.background='rgba(15,17,28,.55)';
-    ov.append(el('h2',null,`第 ${s.stage+1} 關 完成！`), el('p','big', s.stage<2 ? '準備前往：' + STAGES[s.stage+1].name : '最終 BOSS 擊破！'));
+    ov.append(el('h2',null,`第 ${s.stage+1} 關 完成！`), el('p','big', s.stage<LAST ? `準備前往第 ${s.stage+2} 關：` + STAGES[s.stage+1].name : '最終 BOSS 擊破！'));
+    if (s.bonus) ov.append(el('p',null, '🎁 過關獎勵：每人 +1 架'));
     if (s.revived && s.revived.length) ov.append(el('p',null, '🛟 隊友救援：' + s.revived.map(nm).join('、') + ' 回來了！'));
   } else if (s.phase==='over' || s.phase==='win'){
     const r = s.result || {scores:[0,0]};
     ov.append(el('h2',null, s.phase==='win' ? '🎉 任務完成！' : '💥 任務失敗'));
-    ov.append(el('p','big', s.phase==='win' ? (s.solo ? '你獨自擊破了全部 3 關！' : '兩人一起擊破了全部 3 關！') : `在第 ${r.stage+1} 關「${STAGES[r.stage].name}」` + (s.solo ? '被擊落了' : '全員被擊落')));
+    ov.append(el('p','big', s.phase==='win' ? (s.solo ? `你獨自擊破了全部 ${STAGES.length} 關！` : `兩人一起擊破了全部 ${STAGES.length} 關！`) : `在第 ${r.stage+1} 關「${STAGES[r.stage].name}」` + (s.solo ? '被擊落了' : '全員被擊落')));
+    if (r.from) ov.append(el('p',null, `（從第 ${r.from+1} 關出發）`));
     if (s.solo){
       ov.append(el('p','big', '分數：' + r.scores[0].toLocaleString()), el('p',null, r.scores[0] >= s.best ? '🏆 新的最高分！' : '最高分：' + s.best.toLocaleString()));
       const b = el('button','go','再玩一次'); b.onclick = () => $('newBtn').click(); ov.append(b);
