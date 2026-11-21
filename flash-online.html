@@ -79,6 +79,11 @@
   .bombbtn{position:absolute;right:12px;bottom:12px;width:64px;height:64px;border-radius:50%;padding:0;font-size:28px;
     background:rgba(190,75,219,.35);border:2px solid rgba(230,150,255,.7);color:#fff}
   .bombbtn:active{background:rgba(190,75,219,.7)}
+  .shieldbtn{position:absolute;left:12px;bottom:12px;width:64px;height:64px;border-radius:50%;padding:0;font-size:26px;line-height:1;
+    background:rgba(34,184,207,.3);border:2px solid rgba(120,230,250,.75);color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .shieldbtn small{font-size:12px;font-weight:800;margin-top:1px}
+  .shieldbtn:active{background:rgba(34,184,207,.65)}
+  .shieldbtn.empty{opacity:.35} .shieldbtn.on{background:rgba(34,184,207,.75);box-shadow:0 0 16px rgba(120,230,250,.9)}
 </style>
 </head>
 <body class="lob">
@@ -111,6 +116,7 @@
       <div class="ov" id="ov"></div>
       <div class="banner hidden" id="banner"></div>
       <button class="bombbtn hidden" id="bombBtn" aria-label="投彈">💣</button>
+      <button class="shieldbtn hidden" id="shieldBtn" aria-label="防護盾">🛡<small id="shN">0</small></button>
     </div>
   </div>
 </div>
@@ -118,12 +124,13 @@
 <script>
 /* ================= 常數 ================= */
 const W = 360, H = 640, STEP = 1000/60, STAGE_LEN = 80;   // 每關 80 秒後出 BOSS
-const VERSION = 'v2.3';
+const VERSION = 'v2.4';
+const SHIELD_MAX = 5, SHIELD_TIME = 180, SHIELD_R = 26, SHIELD_P = .08;   // 最多存 5 個、每個 3 秒、護盾半徑、擊落掉落機率
 const DIFFS = {
   // cap＝畫面上敵彈上限（超過就先不發射新的一波，保留閃躲空間）；ramp＝每關開火頻率增加幅度；late＝第 7 關起彈數 +1
-  easy:   {name:'簡單', spd:.72, rate:.5,  extra:0, cap:60,  ramp:.03,  late:0},
-  normal: {name:'普通', spd:1,   rate:.68, extra:0, cap:85,  ramp:.045, late:0},
-  hard:   {name:'困難', spd:1.22,rate:1.45,extra:1, cap:200, ramp:.06,  late:1},
+  easy:   {name:'簡單', spd:.72, rate:.5,  extra:0, cap:40,  ramp:.03,  late:0},
+  normal: {name:'普通', spd:1,   rate:.68, extra:0, cap:60,  ramp:.045, late:0},
+  hard:   {name:'困難', spd:1.22,rate:1.45,extra:1, cap:140, ramp:.06,  late:1},
 };
 // 10 關：地圖、BOSS（bt=造型、tier=強化等級）、BOSS 血量、地面敵人種類
 const STAGES = [
@@ -207,7 +214,7 @@ $('joinBtn').onclick = () => {
   tryHost(0);
 };
 $('soloBtn').onclick = startSolo;
-$('ver').textContent = VERSION + '・調整：普通、簡單的彈幕變稀疏，更好閃躲；修正雙人連線畫面卡住';
+$('ver').textContent = VERSION + '・新增：防護盾道具（左下按鈕）；第 7 關後 BOSS 彈幕減量';
 ['nick','code'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key==='Enter') $('joinBtn').click(); }));
 // 連線錯誤 → 看得懂的說明
 function netErr(t){
@@ -315,7 +322,7 @@ function nextRound(){
 /* ================= 遊戲模擬（只在房主端） ================= */
 function newPlayer(i){
   return {x: state.solo ? W/2 : i? W/2+50 : W/2-50, y:H-90, alive:true, out:false, inv:150, weap:'V', lvl:1, mis:'', mlvl:0,
-          bombs:3, lives:3, score:0, cd:0, mcd:0, respawn:0, seq:0, bseen:0};
+          bombs:3, lives:3, score:0, cd:0, mcd:0, respawn:0, seq:0, bseen:0, shields:0, shieldT:0, sseen:0};
 }
 function startRun(){
   G = {f:0, t:0, scroll:0, stage:0, eid:0, players:[newPlayer(0), state.solo ? Object.assign(newPlayer(1), {alive:false, out:true, lives:0, inv:0}) : newPlayer(1)], en:[], eb:[], ps:[], items:[], bombs:[],
@@ -327,11 +334,11 @@ function startRun(){
 }
 function startStage(n){
   G.stage=n; G.t=0; G.en=[]; G.eb=[]; G.items=G.items.filter(i=>i.kind!=='medal'); G.ev=buildStage(n); G.evi=0;
-  G.bossOn=false; G.bossDeadT=0; G.warn=0;
+  G.bossOn=false; G.bossDeadT=0; G.warn=0; G.shDrop=0;   // 這一關已掉落幾個防護盾
   state.stage=n;
-  // 逐關難度：子彈速度 +3.5%／關、開火頻率每關增加（依難度）、困難模式第 7 關起彈數 +1
-  const b = DIFFS[state.diff] || DIFFS.normal;
-  G.dd = {spd: b.spd*(1+n*.035), rate: b.rate*(1+n*b.ramp), extra: b.extra + (n>=6 && b.late ? 1 : 0), cap: b.cap};
+  // 逐關難度：子彈速度、開火頻率逐關增加，但第 6 關後不再增加（後期靠新敵人與 BOSS 變化提升難度）
+  const b = DIFFS[state.diff] || DIFFS.normal, m = Math.min(n, 5);
+  G.dd = {spd: b.spd*(1+m*.035), rate: b.rate*(1+m*b.ramp), extra: b.extra + (n>=6 && b.late ? 1 : 0), cap: b.cap};
   if (n > (state.unlocked|0)){ state.unlocked = n; if (role==='host') saveUnlock(n); }
 }
 const D = () => (G && G.dd) || DIFFS[state.diff] || DIFFS.normal;
@@ -461,12 +468,12 @@ function upBoss(e){
   e.a = aimAt(e.x, e.y);
   if (e.y < stopY-10) return;
   e.p = (e.p||0) + 1;
-  const R = n => rateN(n / (1 + .15*tx));          // 強化型 BOSS 開火更快
+  const R = n => rateN(n / (1 + .08*tx));          // 強化型 BOSS 開火稍快
   const cyc = Math.floor(e.p/260)%3, k = e.p%260, x=e.x, y=e.y, X = d.extra + tx;
   if (e.type==='boss1'){
     if (cyc===0 && k%R(34)===0) fireAim(x,y+10,3,3+X*2,12,0);
     if (cyc===1 && k%R(46)===0) ring(x,y,14+X*4,2.2,e.p*.05,0);
-    if (cyc===2 && k%R(7)===0){ shoot(x,y,e.p*.13,2.6,0); shoot(x,y,e.p*.13+Math.PI,2.6,0); if (tx>=2){ shoot(x,y,e.p*.13+Math.PI/2,2.6,0); shoot(x,y,e.p*.13-Math.PI/2,2.6,0); } }
+    if (cyc===2 && k%R(7)===0){ shoot(x,y,e.p*.13,2.6,0); shoot(x,y,e.p*.13+Math.PI,2.6,0); }
     if (ph2 && k%R(80)===0){ fireAim(x-50,y+20,2,3+tx,18,1); fireAim(x+50,y+20,2,3+tx,18,1); }
   } else if (e.type==='boss2'){
     if (cyc===0 && k%R(30)===0){ for (const [ox,oy] of [[-28,-45],[28,-45],[-28,40],[28,40]]) fireAim(x+ox,y+oy,2.8,1+Math.min(1,X),8,0); }
@@ -476,7 +483,7 @@ function upBoss(e){
   } else if (e.type==='boss3'){
     if (cyc===0 && k%R(6)===0){ for (let j=0;j<3+tx;j++) shoot(x,y+10,e.p*.09+j*Math.PI*2/(3+tx),2.5,0); }
     if (cyc===1 && k%R(18)===0){ fireAim(x-80,y+6,3,3+tx,10,0); fireAim(x+80,y+6,3,3+tx,10,0); }
-    if (cyc===2){ if (k%R(48)===0) ring(x,y+10,20+X*6,2,e.p*.02,1); if (k===60 || k===180){ spawn('fighter',40,-20,{path:'dive',ph:0,dir:1,fireAt:40}); spawn('fighter',W-40,-20,{path:'dive',ph:1,dir:-1,fireAt:40}); } }
+    if (cyc===2){ if (k%R(52)===0) ring(x,y+10,14+X*4,2,e.p*.02,1); if (k===60 || k===180){ spawn('fighter',40,-20,{path:'dive',ph:0,dir:1,fireAt:40}); spawn('fighter',W-40,-20,{path:'dive',ph:1,dir:-1,fireAt:40}); } }
     if (ph2 && k%R(90)===0) fireAim(x,y+20,2,7+tx*2,10,1);
   } else if (e.type==='boss4'){   // 重裝直升機：機砲連射、飛彈扇形、旋轉彈幕
     if (cyc===0 && k%60<30 && k%R(5)===0){ fireAim(x-46,y+8,3.4,1,0,0); fireAim(x+46,y+8,3.4,1,0,0); }
@@ -488,13 +495,13 @@ function upBoss(e){
     const arm = j => e.t*.012 + j*Math.PI/2, tip = j => [x+Math.cos(arm(j))*70, y+Math.sin(arm(j))*70];
     if (!ph2){
       if (k%R(24)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); fireAim(ax,ay,2.8,1+d.extra,8,0); }
-      if (k%R(90)===0) ring(x,y,18+X*4,2,e.p*.03,1);
+      if (k%R(100)===0) ring(x,y,14+X*3,2,e.p*.03,1);
     } else if (!ph3){
-      if (k%R(6)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j),2.4,0); }
+      if (k%R(10)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j),2.3,0); }
       if (k%R(70)===0) fireAim(x,y+30,2.4,5+d.extra*2,12,1);
     } else {
-      if (k%R(40)===0) ring(x,y,24+X*4,2.2,(e.p%80<40)?0:Math.PI/24,0);
-      if (k%R(8)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j)+Math.PI/4,2.6,0); }
+      if (k%R(50)===0) ring(x,y,16+X*3,2.1,(e.p%100<50)?0:Math.PI/16,0);
+      if (k%R(12)===0) for (let j=0;j<4;j++){ const [ax,ay]=tip(j); shoot(ax,ay,arm(j)+Math.PI/4,2.4,0); }
       if (k%R(60)===0) fireAim(x,y+30,2.6,5+d.extra*2,10,1);
       if (k===100) for (let i=0;i<3;i++) spawn('jet', 60+i*120, -30-i*30, {dir: i<1?1:-1});
     }
@@ -531,6 +538,11 @@ function triggerBomb(i){
   p.bombs--; p.inv = Math.max(p.inv, 130);
   G.bombs.push({x:p.x, y:Math.max(110, p.y-150), t:0, o:i});
 }
+function triggerShield(i){
+  const p = G.players[i];
+  if (!p || !p.alive || p.shields<=0 || p.shieldT>0) return;
+  p.shields--; p.shieldT = SHIELD_TIME;
+}
 function killPlayer(i){
   const p = G.players[i];
   if (!p.alive) return;
@@ -546,9 +558,10 @@ function respawn(i){
 }
 function guestInput(d){
   const p = G.players[1];
-  if (!p.alive) { if (d.b>p.bseen) p.bseen=d.b; return; }
+  if (!p.alive) { if (d.b>p.bseen) p.bseen=d.b; if (d.sh>p.sseen) p.sseen=d.sh; return; }
   if (typeof d.x==='number' && typeof d.y==='number'){ p.x = clamp(d.x,12,W-12); p.y = clamp(d.y,20,H-20); }
   if (d.b > p.bseen){ p.bseen = d.b; triggerBomb(1); }
+  if (d.sh > p.sseen){ p.sseen = d.sh; triggerShield(1); }
 }
 
 /* ---------- 道具 ---------- */
@@ -562,6 +575,7 @@ function pickItem(p, it){
   if (it.kind==='P'){ const w = c? 'L':'V'; if (p.weap===w){ if (p.lvl<5) p.lvl++; else p.score+=5000; } else p.weap=w; }
   else if (it.kind==='S'){ const m = c? 'M':'H'; if (p.mis===m){ if (p.mlvl<4) p.mlvl++; else p.score+=5000; } else { p.mis=m; p.mlvl=Math.max(1,p.mlvl); } }
   else if (it.kind==='B'){ p.bombs = Math.min(7, p.bombs+1); }
+  else if (it.kind==='D'){ if (p.shields < SHIELD_MAX) p.shields++; else p.score += 1000; }
   else p.score += 500;
 }
 
@@ -585,6 +599,8 @@ function damage(e, dmg, o){
     if (e.drop) spawnItem(e.drop, e.x, e.y);
     if (e.type==='turret' || (e.ground && Math.random()<.35)) spawnItem('medal', e.x, e.y);
     if (e.type==='bomber') spawnItem(Math.random()<.5?'B':'P', e.x, e.y);
+    // 防護盾：擊落敵人隨機掉落，每關上限 單人 7 個、雙人 10 個
+    if (G.shDrop < (state.solo ? 7 : 10) && Math.random() < SHIELD_P){ G.shDrop++; spawnItem('D', e.x, e.y); }
   }
 }
 
@@ -600,6 +616,7 @@ function simStep(){
   // 玩家
   g.players.forEach((p,i) => {
     if (p.inv>0) p.inv--;
+    if (p.shieldT>0) p.shieldT--;
     if (!p.alive){ if (!p.out && --p.respawn<=0 && state.phase==='play') respawn(i); return; }
     if (state.phase==='play') playerFire(i);
   });
@@ -627,8 +644,10 @@ function simStep(){
   // 敵彈
   for (const b of g.eb){
     b.x+=b.vx; b.y+=b.vy;
-    for (let i=0;i<2;i++){ const p=g.players[i];
-      if (p.alive && p.inv===0 && (p.x-b.x)**2+(p.y-b.y)**2 < (b.r+2.5)**2){ killPlayer(i); b.dead=1; } }
+    for (let i=0;i<2;i++){ const p=g.players[i]; if (!p.alive || b.dead) continue;
+      const d2 = (p.x-b.x)**2+(p.y-b.y)**2;
+      if (p.shieldT>0){ if (d2 < (SHIELD_R+b.r)**2) b.dead=1; continue; }      // 防護盾擋下子彈
+      if (p.inv===0 && d2 < (b.r+2.5)**2){ killPlayer(i); b.dead=1; } }
   }
   g.eb = g.eb.filter(b => !b.dead && b.y>-20 && b.y<H+20 && b.x>-20 && b.x<W+20);
   // 炸彈
@@ -684,7 +703,7 @@ function makeSnap(){
   const g=G, boss=g.en.find(e=>e.boss);
   return {
     type:'snap', f:g.f, st:g.stage, s:Math.round(g.scroll), sv:g.scrollV, wn:g.warn, t:g.t,
-    P: g.players.map(p => [Math.round(p.x),Math.round(p.y),p.alive?1:0,p.inv,p.weap,p.lvl,p.mis,p.mlvl,p.bombs,p.lives,Math.round(p.score),p.seq,p.out?1:0]),
+    P: g.players.map(p => [Math.round(p.x),Math.round(p.y),p.alive?1:0,p.inv,p.weap,p.lvl,p.mis,p.mlvl,p.bombs,p.lives,Math.round(p.score),p.seq,p.out?1:0,p.shields,p.shieldT]),
     E: g.en.map(e => [TYPES.indexOf(e.type),Math.round(e.x),Math.round(e.y),r1(e.vx),r1(e.vy),r1(e.a),e.hit,e.t]),
     B: g.eb.map(b => [Math.round(b.x),Math.round(b.y),r1(b.vx),r1(b.vy),b.k]),
     S: g.ps.map(s => [Math.round(s.x),Math.round(s.y),r1(s.vx),r1(s.vy),s.k,Math.round(s.w)]),
@@ -714,13 +733,14 @@ function onGuestData(d){
 
 /* ================= 輸入 ================= */
 const keys = {};
-const local = {x:W/2+50, y:H-90, init:false, seq:0, bomb:0};
+const local = {x:W/2+50, y:H-90, init:false, seq:0, bomb:0, sh:0};
 let dragDX=0, dragDY=0, lastPt=null;
 addEventListener('keydown', e => {
   if (!state || $('game').classList.contains('hidden')) return;
   if (e.target.tagName==='INPUT') return;
   const k = e.key.toLowerCase(); keys[k]=true;
   if (k===' ' || k==='x' || k==='b') { doBomb(); e.preventDefault(); }
+  if (k==='z' || k==='c' || k==='shift') { doShield(); e.preventDefault(); }
   if (k.startsWith('arrow')) e.preventDefault();
 });
 addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
@@ -739,11 +759,17 @@ screenEl.addEventListener('pointermove', e => {
 });
 ['pointerup','pointercancel'].forEach(t => screenEl.addEventListener(t, e => { if (lastPt && e.pointerId===lastPt.id) lastPt=null; }));
 $('bombBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); doBomb(); });
+$('shieldBtn').addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); doShield(); });
 
 function doBomb(){
   if (!state || state.phase!=='play') return;
   if (role==='host'){ if (G) triggerBomb(0); }
-  else { local.bomb++; conn && conn.open && conn.send({type:'in', x:local.x, y:local.y, b:local.bomb}); }
+  else { local.bomb++; conn && conn.open && conn.send({type:'in', x:local.x, y:local.y, b:local.bomb, sh:local.sh}); }
+}
+function doShield(){
+  if (!state || state.phase!=='play') return;
+  if (role==='host'){ if (G) triggerShield(0); }
+  else { local.sh++; conn && conn.open && conn.send({type:'in', x:local.x, y:local.y, b:local.bomb, sh:local.sh}); }
 }
 function moveLocal(pos){
   const sp = 4.6;
@@ -788,7 +814,7 @@ function step(){
   } else if (role==='guest'){
     const me = snap && snap.P[1];
     if (me && me[2] && playing) moveLocal(local); else { dragDX=dragDY=0; }
-    if (stepN%2===0 && conn && conn.open && playing) conn.send({type:'in', x:Math.round(local.x), y:Math.round(local.y), b:local.bomb});
+    if (stepN%2===0 && conn && conn.open && playing) conn.send({type:'in', x:Math.round(local.x), y:Math.round(local.y), b:local.bomb, sh:local.sh});
   }
 }
 
@@ -1000,14 +1026,14 @@ function drawEnemy(e, f){
   }
   c.restore();
 }
-const ITEMCOL = {P:['#fa5252','#339af0'], S:['#fcc419','#51cf66'], B:['#be4bdb','#be4bdb']};
+const ITEMCOL = {P:['#fa5252','#339af0'], S:['#fcc419','#51cf66'], B:['#be4bdb','#be4bdb'], D:['#15aabf','#15aabf']};
 function drawItem(it, f){
   const [k,x,y,,,ci] = it, c=ctx;
   if (k==='medal'){
     c.fillStyle='#fab005'; c.beginPath(); c.arc(x,y,8,0,7); c.fill();
     c.fillStyle='#fff3bf'; c.beginPath(); c.arc(x,y,4.5,0,7); c.fill(); return;
   }
-  const col = ITEMCOL[k][ci], label = k==='P' ? 'P' : k==='S' ? (ci?'M':'H') : 'B';
+  const col = ITEMCOL[k][ci], label = k==='P' ? 'P' : k==='S' ? (ci?'M':'H') : k==='D' ? '盾' : 'B';
   c.fillStyle='rgba(0,0,0,.35)'; c.fillRect(x-10,y-7,22,16);
   c.fillStyle=col; c.fillRect(x-11,y-8,22,16);
   c.strokeStyle='#fff'; c.lineWidth=1.5; c.strokeRect(x-11,y-8,22,16);
@@ -1063,6 +1089,10 @@ function draw(){
     let x=p[0], y=p[1];
     if (role==='guest' && i===1){ x=local.x; y=local.y; }
     drawPlayer(x,y, i? '#69db7c':'#ff922b', p[3], v.f);
+    if (p[14]>0 && (p[14]>45 || v.f%8<5)){   // 防護盾泡泡（最後 0.75 秒閃爍）
+      const c=ctx; c.fillStyle='rgba(102,217,232,.18)'; c.strokeStyle='rgba(153,233,242,.9)'; c.lineWidth=2.5;
+      c.beginPath(); c.arc(x,y,SHIELD_R,0,7); c.fill(); c.stroke();
+      c.strokeStyle='rgba(255,255,255,.5)'; c.lineWidth=1.5; c.beginPath(); c.arc(x,y,SHIELD_R-5,-2.4+v.f*.08,-1.2+v.f*.08); c.stroke(); }
     if (i===mySlot && state.names[1]){ ctx.fillStyle = i?'#69db7c':'#ff922b'; ctx.beginPath(); ctx.arc(x,y,3,0,7); ctx.fill(); }
   });
   for (const e of E) if (!DEF[TYPES[e[0]]].ground) drawEnemy(e, v.f);
@@ -1086,11 +1116,15 @@ const WNAME = {V:'紅散彈', L:'藍雷射'}, MNAME = {H:'追蹤彈', M:'直射�
 let hudCache = '';
 function updHud(v){
   if (!state) return;
+  const mp = v && v.P[mySlot];
+  if (mp){ const n = mp[13]||0, on = mp[14]>0, sb = $('shieldBtn');
+    if ($('shN').textContent !== String(n)) $('shN').textContent = n;
+    sb.classList.toggle('empty', !n && !on); sb.classList.toggle('on', on); }
   const parts = [0,1].map(i => {
     const p = v && v.P[i];
     if (!p) return ['0',''];
     const st = p[12] ? '已擊落（等待救援）' :
-      `❤${p[9]} 💣${p[8]} ${WNAME[p[4]]}${p[5]}` + (p[6] ? ` ${MNAME[p[6]]}${p[7]}` : '');
+      `❤${p[9]} 💣${p[8]} 🛡${p[13]||0} ${WNAME[p[4]]}${p[5]}` + (p[6] ? ` ${MNAME[p[6]]}${p[7]}` : '');
     return [p[10].toLocaleString(), st];
   });
   const key = JSON.stringify(parts);
@@ -1125,6 +1159,7 @@ function renderMeta(){
     : '等待隊友';
   $('newBtn').disabled = !mate() || s.phase==='ready' || s.phase==='wait';
   $('bombBtn').classList.toggle('hidden', s.phase!=='play');
+  $('shieldBtn').classList.toggle('hidden', s.phase!=='play');
 
   ov.innerHTML = ''; ov.classList.remove('hidden');
   if (s.phase==='wait'){
@@ -1152,9 +1187,10 @@ function renderMeta(){
     ov.append(sw);
     if (cap===mySlot){ const g = el('button','go','出擊！'); g.onclick = () => { if (role==='host') startRun(); else conn.send({type:'start'}); }; ov.append(g); }
     const help = el('p','help');
-    help.innerHTML = '📱 手指在畫面任意處拖曳移動，自動射擊，右下角 💣 投彈<br>⌨️ 方向鍵／WASD 移動，空白鍵投彈（滑鼠也能拖曳）<br>'+
+    help.innerHTML = '📱 手指在畫面任意處拖曳移動，自動射擊，右下 💣 投彈、左下 🛡 防護盾<br>⌨️ 方向鍵／WASD 移動，空白鍵投彈、Z 防護盾（滑鼠也能拖曳）<br>'+
       '<b style="color:#fa5252">P</b>／<b style="color:#339af0">P</b> 紅藍交替：同色升級、異色換武器<br>'+
       '<b style="color:#fcc419">H</b> 追蹤彈／<b style="color:#51cf66">M</b> 直射彈・<b style="color:#be4bdb">B</b> 炸彈・金幣加分<br>'+
+      '<b style="color:#15aabf">盾</b> 防護盾：擊落敵人隨機掉落，最多存 5 個；按左下 🛡（鍵盤 Z）擋 3 秒所有子彈<br>'+
       (s.solo ? '共 3 架，全部被擊落就結束' : '每人 3 架，被擊落後隊友撐到過關就能救你回來') + '<br>每過 3 關每人 +1 架（最多 5 架）';
     ov.append(help);
     if (toastT) ov.append(el('p',null,toastT));
