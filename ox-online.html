@@ -265,7 +265,7 @@ function replyNewGame(sym, accept){
 
 /* ========== 挑戰者（O） ========== */
 function onGuestData(d){
-  if (d.type === 'full') return backToLobby('這個暗號的房間已有兩位玩家，請換一個暗號', true);
+  if (d.type === 'full') return backToLobby('房間已滿，請換暗號', true);
   if (d.type === 'state'){
     const first = !state;
     state = d.state;
