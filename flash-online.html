@@ -118,11 +118,12 @@
 <script>
 /* ================= 常數 ================= */
 const W = 360, H = 640, STEP = 1000/60, STAGE_LEN = 80;   // 每關 80 秒後出 BOSS
-const VERSION = 'v2.0';
+const VERSION = 'v2.3';
 const DIFFS = {
-  easy:   {name:'簡單', spd:.72, rate:.6,  extra:0},
-  normal: {name:'普通', spd:1,   rate:1,   extra:0},
-  hard:   {name:'困難', spd:1.22,rate:1.45,extra:1},
+  // cap＝畫面上敵彈上限（超過就先不發射新的一波，保留閃躲空間）；ramp＝每關開火頻率增加幅度；late＝第 7 關起彈數 +1
+  easy:   {name:'簡單', spd:.72, rate:.5,  extra:0, cap:60,  ramp:.03,  late:0},
+  normal: {name:'普通', spd:1,   rate:.68, extra:0, cap:85,  ramp:.045, late:0},
+  hard:   {name:'困難', spd:1.22,rate:1.45,extra:1, cap:200, ramp:.06,  late:1},
 };
 // 10 關：地圖、BOSS（bt=造型、tier=強化等級）、BOSS 血量、地面敵人種類
 const STAGES = [
@@ -206,8 +207,15 @@ $('joinBtn').onclick = () => {
   tryHost(0);
 };
 $('soloBtn').onclick = startSolo;
-$('ver').textContent = VERSION + '・新增：10 關、逐關變難、新敵人與 BOSS、可選起始關卡';
+$('ver').textContent = VERSION + '・調整：普通、簡單的彈幕變稀疏，更好閃躲；修正雙人連線畫面卡住';
 ['nick','code'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key==='Enter') $('joinBtn').click(); }));
+// 連線錯誤 → 看得懂的說明
+function netErr(t){
+  if (t==='network' || t==='server-error' || t==='socket-error' || t==='socket-closed') return '連不上配對伺服器，請確認網路正常後再試一次';
+  if (t==='browser-incompatible') return '這個瀏覽器不支援連線對戰，請改用 Chrome 或 Safari';
+  if (t==='webrtc') return '兩台裝置之間無法建立連線，請兩人改連同一個 Wi-Fi 再試';
+  return '連線失敗（' + t + '），請稍後再試';
+}
 function lobbyMsg(t, err){ $('lobbyMsg').textContent = t; $('lobbyMsg').className = 'msg'+(err?' err':''); }
 function backToLobby(msg, err){
   cleanup();
@@ -232,7 +240,7 @@ function tryHost(attempt){
   p.on('error', err => {
     if (peer!==p) return;
     if (err.type==='unavailable-id' && !role){ p.destroy(); joinAsGuest(attempt); }
-    else if (!role) backToLobby('連線失敗：'+err.type, true);
+    else if (!role) backToLobby(netErr(err.type), true);
   });
   p.on('disconnected', () => { if (peer===p && role==='host' && !p.destroyed) setTimeout(()=>{ try{p.reconnect();}catch(e){} }, 1500); });
 }
@@ -242,7 +250,7 @@ function joinAsGuest(attempt){
   const retry = () => {
     clearTimeout(timer); if (peer!==p) return; p.destroy();
     if (attempt<3){ lobbyMsg('重新配對中…'); setTimeout(()=>tryHost(attempt+1), 1500); }
-    else backToLobby('配對失敗，請稍後再試或換一個暗號', true);
+    else backToLobby('連不上對方。可能是兩人的網路（例如行動網路）擋住了直接連線：請兩人改連同一個 Wi-Fi 再試，或稍後再試', true);
   };
   p.on('open', () => {
     const c = p.connect(roomId(myCode), {reliable:true, serialization:'json'});
@@ -254,7 +262,7 @@ function joinAsGuest(attempt){
   p.on('error', err => {
     if (peer!==p) return;
     if (err.type==='peer-unavailable') retry();
-    else if (!role) backToLobby('連線失敗：'+err.type, true);
+    else if (!role) backToLobby(netErr(err.type), true);
   });
 }
 
@@ -321,9 +329,9 @@ function startStage(n){
   G.stage=n; G.t=0; G.en=[]; G.eb=[]; G.items=G.items.filter(i=>i.kind!=='medal'); G.ev=buildStage(n); G.evi=0;
   G.bossOn=false; G.bossDeadT=0; G.warn=0;
   state.stage=n;
-  // 逐關難度：子彈速度 +3.5%／關、開火頻率 +6%／關、第 7 關起彈數 +1
+  // 逐關難度：子彈速度 +3.5%／關、開火頻率每關增加（依難度）、困難模式第 7 關起彈數 +1
   const b = DIFFS[state.diff] || DIFFS.normal;
-  G.dd = {spd: b.spd*(1+n*.035), rate: b.rate*(1+n*.06), extra: b.extra + (n>=6?1:0)};
+  G.dd = {spd: b.spd*(1+n*.035), rate: b.rate*(1+n*b.ramp), extra: b.extra + (n>=6 && b.late ? 1 : 0), cap: b.cap};
   if (n > (state.unlocked|0)){ state.unlocked = n; if (role==='host') saveUnlock(n); }
 }
 const D = () => (G && G.dd) || DIFFS[state.diff] || DIFFS.normal;
@@ -344,16 +352,17 @@ function target(x,y){
 }
 const aimAt = (x,y) => { const p=target(x,y); return p ? Math.atan2(p.y-y, p.x-x) : Math.PI/2; };
 function shoot(x,y,a,spd,kind){
-  if (G.eb.length>520) return;
+  if (G.eb.length >= (D().cap||200)) return;
   const s = spd*D().spd;
   G.eb.push({x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, r: kind? 5.5:3.5, k:kind});
 }
 function fan(x,y,a0,spd,n,spreadDeg,kind){
+  if (G.eb.length + n > (D().cap||200)) return;     // 整組放不下就整組不發，避免殘缺的彈幕
   const sp = spreadDeg*Math.PI/180;
   for (let i=0;i<n;i++) shoot(x,y, a0 + (i-(n-1)/2)*sp, spd, kind);
 }
 const fireAim = (x,y,spd,n,spread,kind) => fan(x,y,aimAt(x,y),spd,n,spread,kind);
-function ring(x,y,n,spd,off,kind){ for (let i=0;i<n;i++) shoot(x,y, off + i*Math.PI*2/n, spd, kind); }
+function ring(x,y,n,spd,off,kind){ if (G.eb.length + n > (D().cap||200)) return; for (let i=0;i<n;i++) shoot(x,y, off + i*Math.PI*2/n, spd, kind); }
 
 /* ---------- 關卡腳本 ---------- */
 function buildStage(n){
@@ -749,12 +758,21 @@ function moveLocal(pos){
 
 /* ================= 主迴圈 ================= */
 let acc=0, lastT=0, stepN=0, loopOn=false;
-function startLoop(){ if (loopOn) return; loopOn=true; lastT=performance.now(); requestAnimationFrame(frame); }
-function frame(ts){
-  requestAnimationFrame(frame);
-  acc += Math.min(ts-lastT, 100); lastT = ts;
-  while (acc >= STEP){ acc -= STEP; step(); }
-  draw();
+function startLoop(){ if (loopOn) return; loopOn=true; lastT=performance.now(); requestAnimationFrame(frame); startTicker(); }
+function pump(ts){ acc += Math.min(Math.max(0, ts-lastT), 100); lastT = ts; while (acc >= STEP){ acc -= STEP; step(); } }
+function frame(ts){ requestAnimationFrame(frame); pump(ts); draw(); }
+// 分頁在背景時瀏覽器會暫停 requestAnimationFrame：改用 Worker 計時器繼續推進遊戲，
+// 這樣房主切到別的分頁／App 時，隊友的畫面不會整個卡住。
+function startTicker(){
+  const tick = () => { if (document.hidden) pump(performance.now()); };
+  try{
+    const w = new Worker(URL.createObjectURL(new Blob(['setInterval(function(){postMessage(0)},16)'], {type:'text/javascript'})));
+    w.onmessage = tick;
+  }catch(e){ setInterval(tick, 50); }
+}
+function netFree(){
+  const dc = conn && conn.dataChannel;
+  return !(conn.bufferSize > 0) && !(dc && dc.bufferedAmount > 32*1024);
 }
 function step(){
   stepN++;
@@ -765,7 +783,8 @@ function step(){
     const me = G.players[0];
     if (me.alive && playing) moveLocal(me); else { dragDX=dragDY=0; }
     if (playing) simStep();
-    if (stepN%2===0 && conn && conn.open) conn.send(makeSnap());
+    // 網路塞住時先不送（避免舊畫面越積越多、隊友越來越延遲），等送得出去再送最新畫面
+    if (stepN%2===0 && conn && conn.open && netFree()) conn.send(makeSnap());
   } else if (role==='guest'){
     const me = snap && snap.P[1];
     if (me && me[2] && playing) moveLocal(local); else { dragDX=dragDY=0; }
